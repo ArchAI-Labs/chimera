@@ -8,6 +8,6 @@
 
 <br>
 
-![logo](https://github.com/ArchAI-Labs/chimera/tree/main/img)
+![logo](https://github.com/ArchAI-Labs/chimera/blob/main/img/chimera.png)
 
 <br>
