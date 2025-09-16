@@ -1,0 +1,133 @@
+editorial_plan:
+  description: >
+    Define an editorial plan with {num_posts} {frequency} LinkedIn posts specifically focused on {topic}.
+    
+    **Primary Objectives:**
+    - Select {num_posts} subtopics of {topic} that are currently relevant and appealing to professionals.
+    - Ensure diversity across posts (e.g., industry insights, career skills, company success stories).
+    - Maintain a balance between technical depth and business applicability.
+    - Incorporate trending discussions, market data, or real-world applications.
+
+    **Guidelines:**
+    - Consider the professional audience on LinkedIn (business leaders, researchers, recruiters, students).
+    - Highlight both practical implications and future trends of {topic}.
+    - Choose titles that are short, impactful, and curiosity-driven.
+
+  expected_output: >
+    A structured editorial calendar including:
+    - {num_posts} post titles
+    - A short description (2–3 sentences) for each post
+    - Target audience persona
+    - Suggested hashtags directly related to {topic}
+    - Indication of {frequency} distribution (e.g., weekly, monthly)
+
+  agent: manager
+
+
+technical_content:
+  description: >
+    Enrich the editorial plan with technical explanations, examples, and insights about {topic}.
+    
+    **Content Objectives:**
+    - Provide a clear but accurate explanation of the concepts behind each post.
+    - Add data points, case studies, or industry reports that strengthen credibility.
+    - Highlight the opportunities and challenges of {topic} adoption.
+    - Ensure technical accuracy while keeping the text understandable to non-specialists.
+
+    **Key Dimensions:**
+    1. Core principles of {topic}
+    2. Real-world use cases in different industries
+    3. Benefits vs. limitations
+    4. Emerging research or future directions
+
+  expected_output: >
+    A technical content draft for each of the {num_posts} planned posts including:
+    - Detailed explanation (200–300 words) with references to {topic}
+    - Practical examples or case studies
+    - Mention of current trends or innovations in {topic}
+
+  agent: expert
+
+
+linkedin_post:
+  description: >
+    Rewrite the technical drafts into LinkedIn-style posts that are clear, engaging, and tailored 
+    to a professional audience. Posts should balance **insightful depth** with an accessible tone, 
+    encouraging discussion and interaction.
+
+    **Stylistic Guidelines:**
+    - Start with a strong hook or question that grabs attention.
+    - Use a professional yet approachable tone (no jargon overload).
+    - Keep paragraphs short (2–3 sentences) for readability.
+    - Integrate examples, analogies, or simple metaphors to make complex ideas about {topic} relatable.
+    - End with a clear call-to-action (e.g., ask for opinions, experiences, or insights).
+    - Place 5–7 relevant hashtags naturally at the end of the post.
+
+    **Engagement Strategy:**
+    - Encourage readers to share their perspectives with open-ended questions.
+    - Use storytelling techniques (problem → insight → opportunity).
+    - Add a practical takeaway so readers feel they learned something actionable.
+    - Create posts that are **conversation starters**, not mini-essays.
+
+  expected_output: >
+    For each of the {num_posts} planned entries, produce a LinkedIn-ready post with:
+    - Length between 300 and 350 words
+    - Opening hook or rhetorical question
+    - 2–3 short paragraphs with clear transitions
+    - Examples, analogies, or relatable comparisons about {topic}
+    - Final call-to-action inviting engagement
+    - 5–7 hashtags aligned with the content and {topic}
+
+  agent: copywriter
+
+
+visuals:
+  description: >
+    Suggest images or graphics relevant to LinkedIn posts about {topic}.
+    
+    **Visual Objectives:**
+    - Identify visuals that simplify complex ideas (e.g., infographics, diagrams).
+    - Suggest imagery that reflects both the innovation and practicality of {topic}.
+    - Include modern, professional, and clean design styles.
+    - Ensure all visuals align with LinkedIn’s professional brand tone.
+
+    **Guidelines:**
+    - Each post should have a distinct visual angle (conceptual, data-driven, human-centered).
+    - Visuals should strengthen the reader’s understanding of the post content.
+
+  expected_output: >
+    For each of the {num_posts} posts:
+    - A description of the suggested image or graphic
+    - A reference link (if available) to a similar visual
+    - Indication whether it should be a stock image, infographic, or custom illustration
+    - Key visual elements (colors, icons, themes) aligned with {topic}
+
+  agent: designer
+
+
+plan_posts:
+  description: >
+    Take the LinkedIn posts that have been created and plan them into a {frequency} schedule.
+
+    **Objectives:**
+    - Assign a publishing day and time for each of the {num_posts} posts according to the chosen {frequency}.
+    - Ensure that **each post title is unique** (no repetitions).
+    - Distribute posts evenly across the chosen {frequency} period (avoid clustering too many on the same day).
+    - Save the schedule in a clean Markdown table format for easy tracking.
+
+    **Guidelines:**
+    - Use exactly {num_posts} rows in the table (no more, no less).
+    - Do not repeat post titles, days, or times.
+    - If {frequency} is "settimanali", distribute posts across weekdays (avoid weekends if possible).
+    - If {frequency} is "mensili", distribute posts evenly across different weeks of the month.
+    - If {frequency} is another type, adapt the schedule logically (e.g., bi-weekly → one post every 2 weeks).
+    - Include the responsible team member (default: "Roberto") in the table.
+    - Output only the final table without extra explanations or repeated sections.
+
+  expected_output: >
+    A Markdown table named "LinkedIn Content Calendar - {topic}" with the following columns:
+    | Period ({frequency}) | Day | Time | Title | Responsible |
+
+    The table must include exactly {num_posts} rows, each row corresponding to one unique post.
+
+  agent: planner
