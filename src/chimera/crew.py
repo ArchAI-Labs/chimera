@@ -1,35 +1,25 @@
 from crewai import Agent, Crew, Process, Task
-from crewai.project import CrewBase, agent, crew, task, before_kickoff
-from crewai_tools import DirectoryReadTool, FileReadTool
-from .tools.plantuml_tool import PlantUMLDiagramGeneratorTool
-from .utils.utils import print_output, check_memory_dir, manage_output_dir, LLM_Config, ContextManager
+from crewai.project import CrewBase, agent, crew, task
+from crewai_tools import SerperDevTool, FileWriterTool
+from .utils.utils import print_output, check_memory_dir, LLM_Config
 from .utils.storage_config import (
     get_long_term_memory,
     get_short_term_memory,
     get_entity_memory,
 )
 import os
-from pathlib import Path
-from typing import Any, Dict, List
 from dotenv import load_dotenv
-
 
 load_dotenv()
 
-
 @CrewBase
-class CodeExplainer:
-    """CodeExplainer crew"""
+class LinkedInCrew:
+    """Crew with the goal of creating  post on  LinkedIn"""
 
     agents_config = "config/agents.yaml"
     tasks_config = "config/tasks.yaml"
 
-    directory_read_tool = DirectoryReadTool(directory="./knowledge/")
-
-    local_dir = os.getenv("LOCAL_DIR")
-    output_dir = os.getenv("OUTPUT_DIR")
     check_memory_dir()
-    # manage_output_dir(output_dir=output_dir)
 
     llm = LLM_Config(
         provider=os.getenv("PROVIDER"),
@@ -41,36 +31,68 @@ class CodeExplainer:
         callbacks=[print_output],
     )
 
+
+#Gestione della memoria.
     ltm = get_long_term_memory()
     stm = get_short_term_memory()
     entity = get_entity_memory()
 
+    # aggiunta dei tool
+    web_search_tool = SerperDevTool()
+    file_writer_tool = FileWriterTool()
+
+    #Agenti 
     @agent
-    def software_analyst(self) -> Agent:
+    def manager(self) -> Agent:
+        return Agent(config=self.agents_config["manager"], verbose=True, allow_delegation=False, llm=self.llm)
+
+    @agent
+    def expert(self) -> Agent:
+        return Agent(config=self.agents_config["expert"], verbose=True, allow_delegation=False, llm=self.llm)
+
+    @agent
+    def copywriter(self) -> Agent:
+        return Agent(config=self.agents_config["copywriter"], verbose=True, allow_delegation=False, llm=self.llm)
+
+    @agent
+    def designer(self) -> Agent:
+        return Agent(config=self.agents_config["designer"], verbose=True, allow_delegation=False, llm=self.llm)
+    
+    @agent
+    def planner(self) -> Agent:
         return Agent(
-            config=self.agents_config["software_analyst"],
+            config=self.agents_config["planner"],
             verbose=True,
             allow_delegation=False,
-            max_iter=10,
-            memory=True,
             llm=self.llm,
-        )
-    
-    @task
-    def batch_analysis_task(self) -> Task:
-        return Task(
-            config=self.tasks_config["batch_analysis_task"], agent=self.batch_coordinator()
-        )
-    
-    @task
-    def analysis_task(self) -> Task:
-        return Task(
-            config=self.tasks_config["analysis_task"], agent=self.software_analyst()
+            tools=[self.file_writer_tool]  #
         )
 
+
+    # Task
+    @task
+    def editorial_plan_task(self) -> Task:
+        return Task(config=self.tasks_config["editorial_plan"], agent=self.manager())
+
+    @task
+    def technical_content_task(self) -> Task:
+        return Task(config=self.tasks_config["technical_content"], agent=self.expert())
+
+    @task
+    def linkedin_post_task(self) -> Task:
+        return Task(config=self.tasks_config["linkedin_post"], agent=self.copywriter())
+
+    @task
+    def visuals_task(self) -> Task:
+        return Task(config=self.tasks_config["visuals"], agent=self.designer())
+    
+    @task
+    def plan_posts_task(self) -> Task:
+        return Task(config=self.tasks_config["plan_posts"], agent=self.planner())
+
+    # Definizione della Crew 
     @crew
     def crew(self) -> Crew:
-        """Crea il crew CodeExplainer"""
         return Crew(
             agents=self.agents,
             tasks=self.tasks,
@@ -81,3 +103,5 @@ class CodeExplainer:
             short_term_memory=self.stm,
             entity_memory=self.entity,
         )
+
+
