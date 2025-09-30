@@ -12,8 +12,7 @@ from .utils.storage_qdrant import QdrantStorage
 import os
 from dotenv import load_dotenv
 import wget
-import time 
-import uuid
+from .tools.duckduckgo_tool import MyCustomDuckDuckGoTool
 
 
 ######################tools###############
@@ -76,7 +75,11 @@ class LinkedInCrew:
     entity = get_entity_memory()
 
     # Tool
-    web_search_tool = SerperDevTool()
+    if os.environ.get("SERPER_API_KEY"):
+        web_search_tool = SerperDevTool()
+    else:
+        web_search_tool = MyCustomDuckDuckGoTool()
+    
     file_writer_tool = FileWriterTool()
     dalle_tool = DallETool(model="dall-e-3", size="1024x1024", quality="standard", n=1)
     scraper_tool = ScrapeWebsiteTool()
@@ -228,5 +231,6 @@ class LinkedInCrew:
             verbose=True,
             manager_agent=self.manager(),
             planning=True,
-            manager_llm=self.manager_llm
+            manager_llm=self.manager_llm,
+            chat_llm=self.llm
         )
