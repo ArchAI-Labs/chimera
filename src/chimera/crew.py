@@ -238,7 +238,7 @@ class LinkedInCrew:
 
     @task
     def knowledge_search_task(self)-> Task:
-        return Task(config=self.tasks_config["knowledge_searching"],agent=self.knowledge_manager() )
+        return Task(config=self.tasks_config["knowledge_searching"],agent=self.knowledge_manager())
     
     @task
     def linkedin_post_task(self) -> Task:
