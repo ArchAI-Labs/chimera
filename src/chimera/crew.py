@@ -119,26 +119,25 @@ class LinkedInCrew:
 
         print("\n🚀 Data ingestion complete!")
 
-
-
     # =============== Agenti ===============
+    
     @agent
     def manager(self) -> Agent:
         return Agent(
             config=self.agents_config["manager"],
             verbose=True,
-            allow_delegation=True,
+            allow_delegation=False,
             llm=self.manager_llm,
             max_iter=5
 
         )
-
+    
     @agent
     def expert(self) -> Agent:
         return Agent(
             config=self.agents_config["expert"],
             verbose=True,
-            allow_delegation=True,
+            allow_delegation=False,
             llm=self.llm,
             tools=[self.web_search_tool],
             max_iter=5
@@ -219,18 +218,62 @@ class LinkedInCrew:
     @task
     def plan_posts_task(self) -> Task:
         return Task(config=self.tasks_config["plan_posts"], agent=self.planner())
+    
+    def __init__(self):
+        self.inputs = {}
 
     # =============== Crew ===============
     @crew
     def crew(self) -> Crew:
-        return Crew(
-            agents=[self.expert(), self.product_expert(), #self.knowledge_manager(), 
-                    self.copywriter(), self.designer(), self.planner()],
-            tasks=self.tasks,
-            process=Process.hierarchical,
-            verbose=True,
-            manager_agent=self.manager(),
-            planning=True,
-            manager_llm=self.manager_llm,
-            chat_llm=self.llm
-        )
+        expert_type = self.inputs.get("expert_type", "generalista")
+
+        print(f"EXPERT TYPE {expert_type}")
+
+        if expert_type == "generalista":
+            print("YOU ARE IN GENERALIST CREW")
+            return Crew(
+                agents=[
+                    self.manager(), 
+                    self.expert(),
+                    self.copywriter(), 
+                    self.designer(), 
+                    self.planner()
+                    ],
+                tasks=[
+                    self.editorial_plan_task(), 
+                    self.technical_content_task(), 
+                    self.linkedin_post_task(), 
+                    self.visuals_task(), 
+                    self.plan_posts_task()
+                       ],
+                process=Process.sequential,
+                verbose=True,
+                chat_llm=self.llm
+            )
+        elif expert_type == "prodotto":
+            print("YOU ARE IN PRODUCT CREW")
+            return Crew(
+                agents=[self.manager(), 
+                        self.product_expert(),
+                        self.copywriter(), 
+                        self.designer(), 
+                        self.planner()],
+                tasks=[self.editorial_plan_task(), 
+                       self.product_content_task(), 
+                       self.linkedin_post_task(), 
+                       self.visuals_task(), 
+                       self.plan_posts_task()],
+                process=Process.sequential,
+                verbose=True,
+                chat_llm=self.llm
+            )
+        else:
+            print("YOU ARE IN ELSE CREW")
+            return Crew(
+                agents=self.agents,
+                tasks=self.tasks,
+                process=Process.sequential,
+                verbose=True,
+                chat_llm=self.llm
+            )
+
