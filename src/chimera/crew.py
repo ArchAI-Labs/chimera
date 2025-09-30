@@ -13,16 +13,13 @@ from .utils.storage_qdrant import QdrantStorage
 import os
 from dotenv import load_dotenv
 import wget
-<<<<<<< HEAD
 import time 
 import uuid
 from .tools.dalle_tool import download_image_tool
-from  .tools.qdrant_tool import upsert_knowledge, search_knowledge
+#from  .tools.qdrant_tool import upsert_knowledge, search_knowledge
 from .utils.storage_config import QdrantStorage
 from .utils.storage_qdrant import QdrantClient
-=======
 from .tools.duckduckgo_tool import MyCustomDuckDuckGoTool
->>>>>>> origin/develop
 
  
 ######################tools###############
