@@ -18,6 +18,9 @@ dependencies = [
     "pymupdf==1.25.3",
     "javalang",
     "wget",
+    "duckduckgo-search==8.1.1",
+    "langchain_community",
+    "ddgs",
 
 ]
 
