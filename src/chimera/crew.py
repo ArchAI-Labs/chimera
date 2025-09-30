@@ -59,6 +59,17 @@ class LinkedInCrew:
         callbacks=[print_output],
     )
 
+    manager_llm = LLM_Config(
+        provider=os.getenv("PROVIDER"),
+        model=os.getenv("MODEL"),
+        base_url=os.getenv("BASE_URL"),
+        temperature=float(os.getenv("TEMPERATURE")),
+        max_tokens=int(os.getenv("MAX_TOKENS")),
+        timeout=float(os.getenv("TIMEOUT")),
+        callbacks=[print_output],
+    )
+
+
     # Gestione della memoria
     ltm = get_long_term_memory()
     stm = get_short_term_memory()
@@ -77,7 +88,9 @@ class LinkedInCrew:
             config=self.agents_config["manager"],
             verbose=True,
             allow_delegation=True,
-            llm=self.llm,
+            llm=self.manager_llm,
+            max_iter=5
+
         )
 
     @agent
@@ -85,23 +98,28 @@ class LinkedInCrew:
         return Agent(
             config=self.agents_config["expert"],
             verbose=True,
-            allow_delegation=False,
+            allow_delegation=True,
             llm=self.llm,
             tools=[self.web_search_tool],
+            max_iter=5
         )
 
     @agent
     def product_expert(self) -> Agent:
         product_sites = os.getenv("PRODUCT_SITES")
-        sites_list = [s.strip() for s in product_sites.split(",") if s.strip()]
-        return Agent(
-            config=self.agents_config["product_expert"],
-            verbose=True,
-            allow_delegation=False,
-            llm=self.llm,
-            tools=[self.scraper_tool],
-            description=f"Product expert with knowledge from company sources: {sites_list}"
-        )
+        if product_sites:
+            sites_list = [s.strip() for s in product_sites.split(",") if s.strip()]
+            return Agent(
+                config=self.agents_config["product_expert"],
+                verbose=True,
+                allow_delegation=False,
+                llm=self.llm,
+                tools=[self.scraper_tool],
+                description=f"Product expert with knowledge from company sources: {sites_list}",
+                max_iter=5
+            )
+        else:
+            return None
     
     @agent
     def knowledge_manager(self) -> Agent:
@@ -110,8 +128,9 @@ class LinkedInCrew:
             verbose=True,
             allow_delegation=False,
             llm=self.llm,
-            tools=[upsert_knowledge, search_knowledge],
-            description=f"Reads and Writes on knowledge"
+            max_iter=5,
+            # tools=[upsert_knowledge, search_knowledge],
+            # description=f"Reads and Writes on knowledge"
         )
 
     @agent
@@ -121,6 +140,7 @@ class LinkedInCrew:
             verbose=True,
             allow_delegation=False,
             llm=self.llm,
+            max_iter=5
         )
 
     @agent
@@ -131,6 +151,7 @@ class LinkedInCrew:
             allow_delegation=False,
             llm=self.llm,
             tools=[self.dalle_tool, download_image_tool],
+            max_iter=5
         )
 
     @agent
@@ -141,6 +162,7 @@ class LinkedInCrew:
             allow_delegation=False,
             llm=self.llm,
             tools=[self.file_writer_tool],
+            max_iter=5
         )
 
     # =============== Task ===============
@@ -186,6 +208,8 @@ class LinkedInCrew:
             process=Process.hierarchical,
             verbose=True,
             manager_agent=self.manager(),
+            planning=True,
+            manager_llm=self.manager_llm
         )
 
 
