@@ -1,6 +1,6 @@
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
-from crewai_tools import SerperDevTool, FileWriterTool, DallETool, ScrapeWebsiteTool
+from crewai_tools import SerperDevTool, FileWriterTool, DallETool, ScrapeWebsiteTool, RagTool
 from crewai.tools import tool
 from .utils.utils import print_output, check_memory_dir, LLM_Config
 from .utils.storage_config import (
@@ -31,7 +31,7 @@ from .utils.storage_qdrant import QdrantClient
 
 load_dotenv()
 
-qdrant_client = QdrantStorage(type=os.environ.get("COLLECTION"))
+# qdrant_client = QdrantStorage(type=os.environ.get("COLLECTION"))
 
 #TODO: aggiungere tool
 qdrant_dock= QdrantClient(location=os.environ.get("QDRANT_URL"))
@@ -57,7 +57,7 @@ class LinkedInCrew:
 
     manager_llm = LLM_Config(
         provider=os.getenv("PROVIDER"),
-        model=os.getenv("MODEL"),
+        model=os.getenv("MANGER_MODEL"),
         base_url=os.getenv("BASE_URL"),
         temperature=float(os.getenv("TEMPERATURE")),
         max_tokens=int(os.getenv("MAX_TOKENS")),
@@ -76,6 +76,43 @@ class LinkedInCrew:
     file_writer_tool = FileWriterTool()
     dalle_tool = DallETool(model="dall-e-3", size="1024x1024", quality="standard", n=1)
     scraper_tool = ScrapeWebsiteTool()
+
+    # Tool RAG che utilizza la tua classe QdrantStorage personalizzata
+    # RagTool si occuperà di istanziare QdrantStorage internamente
+    qdrant_rag_tool = RagTool(
+        rag_storage=QdrantStorage,
+        collection_name=os.getenv("COLLECTION", "default_collection")
+    )
+
+    # --- CARICAMENTO DATI DA PRODUCT_SITES ---
+    print("Starting data ingestion from PRODUCT_SITES variable...")
+
+    # 1. Leggi la variabile d'ambiente
+    product_sites_str = os.getenv("PRODUCT_SITES")
+
+    if not product_sites_str:
+        print("❌ Errore: La variabile d'ambiente PRODUCT_SITES non è stata trovata.")
+        print("   Assicurati che sia definita nel tuo file .env")
+    else:
+        # 2. Dividi la stringa in una lista di URL
+        sites_list = [site.strip() for site in product_sites_str.split(',')]
+
+        # 3. Itera sulla lista e aggiungi ogni URL alla knowledge base
+        for site_url in sites_list:
+            if site_url:  # Controlla che l'URL non sia vuoto
+                print(f"Adding data from: {site_url} ...")
+                try:
+                    qdrant_rag_tool.add(
+                        data_type="web_page",
+                        url=site_url
+                    )
+                    print(f"✅ Successfully added content from {site_url}")
+                except Exception as e:
+                    print(f"❌ Failed to add {site_url}. Error: {e}")
+
+        print("\n🚀 Data ingestion complete!")
+
+
 
     # =============== Agenti ===============
     @agent
@@ -102,31 +139,13 @@ class LinkedInCrew:
 
     @agent
     def product_expert(self) -> Agent:
-        product_sites = os.getenv("PRODUCT_SITES")
-        if product_sites:
-            sites_list = [s.strip() for s in product_sites.split(",") if s.strip()]
-            return Agent(
-                config=self.agents_config["product_expert"],
-                verbose=True,
-                allow_delegation=False,
-                llm=self.llm,
-                tools=[self.scraper_tool],
-                description=f"Product expert with knowledge from company sources: {sites_list}",
-                max_iter=5
-            )
-        else:
-            return None
-    
-    @agent
-    def knowledge_manager(self) -> Agent:
         return Agent(
-            config=self.agents_config["knowledge_manager"],
+            config=self.agents_config["product_expert"],
             verbose=True,
             allow_delegation=False,
             llm=self.llm,
-            max_iter=5,
-            # tools=[upsert_knowledge, search_knowledge],
-            # description=f"Reads and Writes on knowledge"
+            tools=[self.qdrant_rag_tool],
+            max_iter=5
         )
 
     @agent
@@ -174,13 +193,13 @@ class LinkedInCrew:
     def product_content_task(self) -> Task:
         return Task(config=self.tasks_config["product_content"], agent=self.product_expert())
     
-    @task
-    def knowledge_saving_task(self)-> Task:
-        return Task(config=self.tasks_config["knowledge_saving"],agent=self.knowledge_manager() )
+    # @task
+    # def knowledge_saving_task(self)-> Task:
+    #     return Task(config=self.tasks_config["knowledge_saving"],agent=self.knowledge_manager() )
 
-    @task
-    def knowledge_search_task(self)-> Task:
-        return Task(config=self.tasks_config["knowledge_searching"],agent=self.knowledge_manager())
+    # @task
+    # def knowledge_search_task(self)-> Task:
+    #     return Task(config=self.tasks_config["knowledge_searching"],agent=self.knowledge_manager() )
     
     @task
     def linkedin_post_task(self) -> Task:
@@ -198,7 +217,7 @@ class LinkedInCrew:
     @crew
     def crew(self) -> Crew:
         return Crew(
-            agents=[self.expert(), self.product_expert(), self.knowledge_manager(), 
+            agents=[self.expert(), self.product_expert(), #self.knowledge_manager(), 
                     self.copywriter(), self.designer(), self.planner()],
             tasks=self.tasks,
             process=Process.hierarchical,
@@ -207,11 +226,3 @@ class LinkedInCrew:
             planning=True,
             manager_llm=self.manager_llm
         )
-
-
-
-
-# memory=True,
-            # long_term_memory=self.ltm,
-            # short_term_memory=self.stm,
-            # entity_memory=self.entity,
