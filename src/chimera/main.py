@@ -55,7 +55,6 @@ def run():
         "text_dir": text_dir,
         "image_dir": image_dir,
         "topic": topic,
-        "knowledge": os.getenv("PRODUCT_SITES"),
     }
     print(inputs)
 

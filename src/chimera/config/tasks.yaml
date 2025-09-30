@@ -52,8 +52,7 @@ technical_content:
 
 product_content:
   description: >
-    Use company-specific knowledge scraped from the following sources: {knowledge}. Before scraping, it asks the knowledge_manager to read from already saved knowledge, if nothing useful is found, 
-    additional knowledge is scraped and then saved through the knowledge_manager.
+    Use company-specific knowledge scraped from the knowledge using the tool.
     Provide accurate and professional answers strictly based on company products, documentation, and services.
 
     Guidelines:
@@ -69,19 +68,19 @@ product_content:
 
   agent: product_expert
 
-knowledge_saving:
-  description: >
-    Take the knowledge scraped from the websites and store it to the knowledge base
-  expected_output: >
-    An acknowledgment 
-  agent: knowledge_manager
+# knowledge_saving:
+#   description: >
+#     Take the knowledge scraped from the websites and store it to the knowledge base
+#   expected_output: >
+#     An acknowledgment 
+#   agent: knowledge_manager
 
-knowledge_searching:
-  description: >
-    Given a topic, look it up in the knowledge base
-  expected_output: >
-    A report on the relevant information found in the knwoledge base 
-  agent: knowledge_manager
+# knowledge_searching:
+#   description: >
+#     Given a topic, look it up in the knowledge base
+#   expected_output: >
+#     A report on the relevant information found in the knwoledge base 
+#   agent: knowledge_manager
 
 
 linkedin_post:
