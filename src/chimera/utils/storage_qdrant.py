@@ -1,6 +1,9 @@
 from typing import Any, Dict, List, Optional
 import os
 
+import hashlib
+import uuid
+
 from crewai.memory.storage.rag_storage import RAGStorage
 from qdrant_client import QdrantClient
 
@@ -67,4 +70,22 @@ class QdrantStorage(RAGStorage):
             )
 
     def save(self, value: Any, metadata: Dict[str, Any]) -> None:
-        self.client.add(self.type, documents=[value], metadata=[metadata or {}])
+        """
+        Salva il documento in Qdrant usando un ID basato sull'hash del contenuto
+        per prevenire duplicati.
+        """
+        content_hash = hashlib.sha256(value.encode('utf-8')).hexdigest()
+
+        deterministic_id = str(uuid.UUID(content_hash[:32]))
+
+        if metadata:
+            metadata['content_hash'] = content_hash
+        else:
+            metadata = {'content_hash': content_hash}
+
+        self.client.add(
+            collection_name=self.type,
+            documents=[value],
+            metadata=[metadata],
+            ids=[deterministic_id]
+        )
