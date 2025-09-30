@@ -61,7 +61,16 @@ def run():
 
     # try:
     print("Initializing LinkedIn Crew...")
-    linkedin_crew = LinkedInCrew().crew()
+    #linkedin_crew = LinkedInCrew().crew()
+
+    # 1. Crea un'istanza della classe
+    crew_builder = LinkedInCrew()
+
+    # 2. Assegna il dizionario 'inputs' all'attributo dell'istanza
+    crew_builder.inputs = inputs
+
+    # 3. Ora chiama il metodo .crew() sull'istanza che contiene gli input
+    linkedin_crew = crew_builder.crew() 
 
     print("Starting content creation pipeline...")
     print("=" * 60)
