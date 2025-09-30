@@ -8,17 +8,17 @@ from .utils.storage_config import (
     get_short_term_memory,
     get_entity_memory,
 )
+from .utils.storage_qdrant import QdrantStorage
 import os
 from dotenv import load_dotenv
 import wget
-from crewai.rag.qdrant.config import QdrantConfig
-from qdrant_client import QdrantClient
 import time 
 import uuid
 
 
 ######################tools###############
 
+#TODO spostare in un file in tools
 #####Dall-E tools####
 @tool("Download Image Tool")
 def download_image_tool(url: str, fname: str) -> str:
@@ -36,85 +36,9 @@ def download_image_tool(url: str, fname: str) -> str:
 
 load_dotenv()
 
+qdrant_client = QdrantStorage(type=os.environ.get("COLLECTION"))
 
-
-#possibile metodo per la configurazione qdrant:
-
-# def get_qdrant_config():
-#     collection = os.getenv("QDRANT_COLLECTION", "crew_knowledge")
-#     embedder = os.getenv("EMBEDDER", "jinaai/jina-embeddings-v2-base-en")
-#     mode = os.getenv("QDRANT_MODE", "memory").lower()
-#     if mode == "memory":
-#         return QdrantConfig(
-#            host=":memory:",
-#            collection_name=collection,
-#            embedding_model=embedder) 
-
-
-# Crea client dalla configurazione che gli abbiamo passato.
-#qdrant_config = get_qdrant_config()
-#client = qdrant_config.create_client()
-COLLECTION = "crew_knowledge"  #stringa con cui chiamiamo la colletion dell'informazione.
-#COLLECTION = qdrant_config.collection_name
-client = QdrantClient(":memory:") 
-
-
-
-# definizione degli id. Ad ogni id è associato un vettore in qdrant.
-#scriviamo questo metodo stable_id.
-
-# - Normalizza il testo (spazi, minuscole).
-# - Genera un **UUID deterministico** dal testo.
-# - Così lo stesso testo avrà sempre lo stesso ID.
-
-def stable_id(text: str) -> str:
-    norm = " ".join(text.split()).strip().lower()
-    return uuid.uuid5(uuid.NAMESPACE_URL, norm).hex
-
-
-# Definizione della funzione di upsert.
-# - Calcola un ID stabile per il testo.
-# - Crea un payload (`metadata`) con testo e timestamp.
-# - Inserisce (o aggiorna) nel DB il documento con:
-#     - **embedding** del testo (calcolato automaticamente se il client supporta `documents=[text]`)
-#     - **metadati**
-#     - **id** unico
-# - Restituisce un messaggio di conferma.
-
-
-
-@tool("Write to knowledge base")
-def upsert_knowledge(text: str) -> str:
-    """Saves a text string inside the knowledge base"""
-    _id = stable_id(text)
-    metadata = {"text": text, "ts": int(time.time())}
-    client.add(
-        collection_name=COLLECTION,
-        documents=[text],
-        metadata=[metadata],
-        ids=[_id]
-    )
-    return f"Salvato id={_id[:8]}"
-
-
-@tool("Search in knowledge base")
-def search_knowledge(query: str) -> str:
-    """Search for something in the knowledge base."""
-    top_k = 5
-    res = client.query(
-        collection_name=COLLECTION,
-        query_text=query,  
-        limit=int(top_k),
-        query_filter=None
-    )
-    if not res:
-        return "(nessun risultato)"
-    lines = []
-    for r in res:
-        meta = r.metadata or {}
-        lines.append(f"- {meta.get('text','<no text>')} (score={r.score:.3f}))")
-    return "\n".join(lines)
-
+#TODO: aggiungere tool
 
 @CrewBase
 class LinkedInCrew:
