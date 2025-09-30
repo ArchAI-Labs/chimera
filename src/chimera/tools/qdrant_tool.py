@@ -8,6 +8,8 @@ from time import time
 load_dotenv()
 
 
+
+
 # possibile metodo per la configurazione qdrant:
 
 # def get_qdrant_config():

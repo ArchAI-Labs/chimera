@@ -8,29 +8,24 @@ from .utils.storage_config import (
     get_short_term_memory,
     get_entity_memory,
 )
+
 from .utils.storage_qdrant import QdrantStorage
 import os
 from dotenv import load_dotenv
 import wget
 import time 
 import uuid
+from .tools.dalle_tool import download_image_tool
+from  .tools.qdrant_tool import upsert_knowledge, search_knowledge
+from .utils.storage_config import QdrantStorage
+from .utils.storage_qdrant import QdrantClient
 
-
+ 
 ######################tools###############
 
 #TODO spostare in un file in tools
 #####Dall-E tools####
-@tool("Download Image Tool")
-def download_image_tool(url: str, fname: str) -> str:
-    """Tool to download an image given its url and save it using the passed fname."""
-    ret = None
-    try:
-        ret = wget.download(url, fname)
-    except Exception as e:
-        print('Error during download:', e)
-    if ret != fname:
-        return f"There was an error during the download"
-    return f"Image successfully saved as {fname}"
+
 
 
 
@@ -39,6 +34,7 @@ load_dotenv()
 qdrant_client = QdrantStorage(type=os.environ.get("COLLECTION"))
 
 #TODO: aggiungere tool
+qdrant_dock= QdrantClient(location=os.environ.get("QDRANT_URL"))
 
 @CrewBase
 class LinkedInCrew:
