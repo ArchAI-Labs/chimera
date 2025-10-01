@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: my_qdrant_service
+    ports:
+      - "6333:6333" # Maps the container's port 6333 to your local machine's port 6333
+      - "6334:6334" # For gRPC
+    volumes:
+      - ./qdrant_data:/qdrant/storage # This is the crucial line for data persistence

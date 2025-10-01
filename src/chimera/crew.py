@@ -70,9 +70,9 @@ class LinkedInCrew:
 
 
     # Gestione della memoria
-    ltm = get_long_term_memory()
-    stm = get_short_term_memory()
-    entity = get_entity_memory()
+    # ltm = get_long_term_memory()
+    # stm = get_short_term_memory()
+    # entity = get_entity_memory()
 
     # Tool
     if os.environ.get("SERPER_API_KEY"):
@@ -84,40 +84,44 @@ class LinkedInCrew:
     dalle_tool = DallETool(model="dall-e-3", size="1024x1024", quality="standard", n=1)
     scraper_tool = ScrapeWebsiteTool()
 
-    # Tool RAG che utilizza la tua classe QdrantStorage personalizzata
-    # RagTool si occuperà di istanziare QdrantStorage internamente
-    qdrant_rag_tool = RagTool(
-        rag_storage=QdrantStorage,
-        collection_name=os.getenv("COLLECTION", "default_collection")
-    )
+    # # Tool RAG che utilizza la tua classe QdrantStorage personalizzata
+    # # RagTool si occuperà di istanziare QdrantStorage internamente
 
-    # --- CARICAMENTO DATI DA PRODUCT_SITES ---
-    print("Starting data ingestion from PRODUCT_SITES variable...")
+    qdrant_client = QdrantStorage(type=os.getenv("COLLECTION", "default_collection"))
+    qdrant_rag_tool = RagTool(rag_storage=qdrant_client)
 
-    # 1. Leggi la variabile d'ambiente
-    product_sites_str = os.getenv("PRODUCT_SITES")
 
-    if not product_sites_str:
-        print("❌ Errore: La variabile d'ambiente PRODUCT_SITES non è stata trovata.")
-        print("   Assicurati che sia definita nel tuo file .env")
-    else:
-        # 2. Dividi la stringa in una lista di URL
+    # Il metodo di caricamento dati può tornare "privato" (con _)
+    def _scrape_and_load_data(self):
+        print("🚀 Starting data ingestion from PRODUCT_SITES variable...")
+        product_sites_str = os.getenv("PRODUCT_SITES")
+        
+        if not product_sites_str:
+            print("❌ Errore: La variabile d'ambiente PRODUCT_SITES non è stata trovata.")
+            return
+        
         sites_list = [site.strip() for site in product_sites_str.split(',')]
+        scraper = self.scraper_tool 
 
-        # 3. Itera sulla lista e aggiungi ogni URL alla knowledge base
         for site_url in sites_list:
-            if site_url:  # Controlla che l'URL non sia vuoto
-                print(f"Adding data from: {site_url} ...")
-                try:
-                    qdrant_rag_tool.add(
-                        data_type="web_page",
-                        url=site_url
-                    )
-                    print(f"✅ Successfully added content from {site_url}")
-                except Exception as e:
-                    print(f"❌ Failed to add {site_url}. Error: {e}")
+            if not site_url:
+                continue
+            
+            print(f"🔎 Scraping data from: {site_url} ...")
+            try:
+                scraped_content = scraper.run(website_url=site_url)
+                
+                print(f"💾 Saving content from {site_url} to Qdrant...")
+                self.qdrant_client.save(
+                    value=scraped_content, 
+                    metadata={'source_url': site_url}
+                )
+                print(f"✅ Successfully scraped and saved content from {site_url}")
 
-        print("\n🚀 Data ingestion complete!")
+            except Exception as e:
+                print(f"❌ Failed to process {site_url}. Error: {e}")
+        
+        print("\n✨ Data ingestion complete!")
 
     # =============== Agenti ===============
     
@@ -150,7 +154,7 @@ class LinkedInCrew:
             verbose=True,
             allow_delegation=False,
             llm=self.llm,
-            tools=[self.qdrant_rag_tool],
+            tools=[self.scraper_tool, self.qdrant_rag_tool],
             max_iter=5
         )
 
@@ -199,14 +203,6 @@ class LinkedInCrew:
     def product_content_task(self) -> Task:
         return Task(config=self.tasks_config["product_content"], agent=self.product_expert())
     
-    # @task
-    # def knowledge_saving_task(self)-> Task:
-    #     return Task(config=self.tasks_config["knowledge_saving"],agent=self.knowledge_manager() )
-
-    # @task
-    # def knowledge_search_task(self)-> Task:
-    #     return Task(config=self.tasks_config["knowledge_searching"],agent=self.knowledge_manager() )
-    
     @task
     def linkedin_post_task(self) -> Task:
         return Task(config=self.tasks_config["linkedin_post"], agent=self.copywriter())
@@ -219,13 +215,23 @@ class LinkedInCrew:
     def plan_posts_task(self) -> Task:
         return Task(config=self.tasks_config["plan_posts"], agent=self.planner())
     
-    def __init__(self):
-        self.inputs = {}
+    def __init__(self, inputs=None):
+        # 1. Chiama il costruttore della classe genitore (CrewBase).
+        #    QUESTA È LA RIGA FONDAMENTALE CHE RISOLVE TUTTO.
+        super().__init__()
+
+        # 2. Ora gestisci i tuoi input in modo sicuro.
+        self.inputs = inputs if inputs is not None else {}
+
+        # 3. Avvia il caricamento dei dati nella knowledge base.
+        #    La logica è di nuovo incapsulata e si avvia alla creazione.
+        self._scrape_and_load_data()
 
     # =============== Crew ===============
     @crew
     def crew(self) -> Crew:
         expert_type = self.inputs.get("expert_type", "generalista")
+
 
         print(f"EXPERT TYPE {expert_type}")
 
@@ -248,7 +254,11 @@ class LinkedInCrew:
                        ],
                 process=Process.sequential,
                 verbose=True,
-                chat_llm=self.llm
+                chat_llm=self.llm,
+                # memory=True,
+                # long_term_memory=self.ltm,
+                # short_term_memory=self.stm,
+                # entity_memory=self.entity,
             )
         elif expert_type == "prodotto":
             print("YOU ARE IN PRODUCT CREW")
@@ -265,7 +275,11 @@ class LinkedInCrew:
                        self.plan_posts_task()],
                 process=Process.sequential,
                 verbose=True,
-                chat_llm=self.llm
+                chat_llm=self.llm,
+                # memory=True,
+                # long_term_memory=self.ltm,
+                # short_term_memory=self.stm,
+                # entity_memory=self.entity,
             )
         else:
             print("YOU ARE IN ELSE CREW")
@@ -274,6 +288,10 @@ class LinkedInCrew:
                 tasks=self.tasks,
                 process=Process.sequential,
                 verbose=True,
-                chat_llm=self.llm
+                chat_llm=self.llm,
+                # memory=True,
+                # long_term_memory=self.ltm,
+                # short_term_memory=self.stm,
+                # entity_memory=self.entity,
             )
 

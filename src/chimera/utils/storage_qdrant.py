@@ -19,6 +19,7 @@ class QdrantStorage(RAGStorage):
 
     def __init__(self, type, allow_reset=True, embedder_config=None, crew=None):
         super().__init__(type, allow_reset, embedder_config, crew)
+        self._initialize_app()
 
     def search(
         self,
