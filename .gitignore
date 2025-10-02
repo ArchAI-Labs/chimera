@@ -210,3 +210,4 @@ __marimo__/
 memory/
 output/
 uv.lock
+qdrant_data/
