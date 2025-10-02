@@ -1,37 +1,37 @@
 editorial_plan:
   description: >
-     You MUST NOT delegate to both experts in the same run. If unsure, ask yourself one clarification and choose one.
-      Use at most one "Delegate work to coworker" during the research stage; no parallel delegations.
+    Based on {expert_type} conduct web research to identify trending discussions, reports, and professional debates about {topic}.  
+    Based on your findings, define a **strategic editorial plan** with {num_posts} {frequency} LinkedIn posts.  
 
-      When the expert is "generalista", coordinate the creation of a strategic editorial plan about {topic}.
-      The manager should then organize the findings into a balanced editorial plan with {num_posts} {frequency} LinkedIn posts.
+      Each post must specify both:  
+      - **Content Type**: Industry Insights, Career Skills, Company Success Stories, Thought Leadership, Academic Highlights, Student Perspectives.  
+      - **Target Audience** (IT-oriented):  
+        - Primary: CTOs, CIOs, IT Managers, Business Leaders in tech  
+        - Secondary: Researchers, Developers, Tech Enthusiasts  
+        - Tertiary: Students, Early-Career Professionals, HR Tech Specialists  
 
-      If "generalista", follow these Guidelines:
-      - Each post must clearly specify its content type and its target audience.
-      - Maintain a balance: ~50% primary audience, ~40% secondary, max 10% tertiary.
-      - Titles must be impactful and short.
-      - Descriptions must use concrete examples, data, or references (no generic claims).
-
-     When the expert is "prodotto", coordinate the creation of a strategic editorial plan about {topic} without considering the generalist expert.
-      The manager should then organize the findings into a balanced editorial plan with {num_posts} {frequency} LinkedIn posts.
-      When {expert_type} is selected, do not delegate the same task to the other expert.
+    **Guidelines:**  
+    - Posts must be distributed approximately equally between **Primary** and **Secondary** audiences.  
+    - Tertiary audiences may appear occasionally but should not exceed 20% of posts.  
+    - Titles must be short and impactful.  
+    - Descriptions must use examples or data, not generic statements.  
   expected_output: >
-    A structured editorial plan in Markdown format saved in {text_dir}, including:  
-    - {num_posts} post titles  
-    - Short descriptions (2–3 sentences)  
-    - Target audience (primary/secondary/tertiary)  
-    - Suggested hashtags  
-    - Publishing cadence ({frequency})  
+    A detailed editorial plan in Markdown format, saved in {text_dir}, including:
+    - {num_posts} unique post titles
+    - A 2–3 sentence description for each post
+    - The **content type** (Industry Insight, Career Skill, Success Story, Thought Leadership, Academic Highlight, Student Perspective)
+    - The **target audience** (Business Leaders, Researchers, Students, Recruiters)
+    - Suggested hashtags
+    - Indication of publishing cadence ({frequency})
 
   agent: manager
   output_file: "{text_dir}/editorial_plan_{topic}.md"
 
 
-
 technical_content:
   description: >
-    Expand the editorial plan into technical drafts.  
-    Provide depth and credibility using industry and academic sources.  
+    Provide depth and credibility using industry and academic sources according 
+    to the {topic}.  
 
     **Requirements:**  
     - Explain the concepts behind each post in 200–300 words.  
@@ -46,13 +46,13 @@ technical_content:
     - Example, analogy, or case study  
     - References or sources  
 
-  agent: expert
+  agent: generalist_expert
   output_file: "{text_dir}/technical_content_{topic}.md"
 
 
 product_content:
   description: >
-    Use company-specific knowledge scraped from the knowledge using the tool.
+    Use company-specific knowledge scraped from {product_site}  based on {topic}. 
     Provide accurate and professional answers strictly based on company products, documentation, and services.
 
     Guidelines:
@@ -67,6 +67,7 @@ product_content:
     - References to specific company pages
 
   agent: product_expert
+  output_file: "{text_dir}/product_content_{topic}.md"
 
 # knowledge_saving:
 #   description: >
@@ -142,7 +143,7 @@ plan_posts:
     - Ensure at least 30–40% Secondary audience posts are included throughout  
 
   expected_output: >
-    A Markdown table named "LinkedIn Content Calendar - {topic}" with the columns:  
+    A Markdown table named "LinkedIn Content Calendar - {topic}" starting from today's day, with the columns:  
     | Period ({frequency}) | Day | Title | Audience |  
 
     Requirements:  

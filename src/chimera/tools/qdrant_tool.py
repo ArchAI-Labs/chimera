@@ -1,5 +1,5 @@
 from crewai.tools import tool
-from utils.storage_qdrant import QdrantStorage
+
 import os
 from dotenv import load_dotenv
 import uuid

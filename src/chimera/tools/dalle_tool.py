@@ -1,5 +1,6 @@
 # DALL-E TOOLS:
 from crewai.tools import tool
+import wget
 
 @tool("Download Image Tool")
 def download_image_tool(url: str, fname: str) -> str:

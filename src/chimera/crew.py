@@ -9,17 +9,15 @@ from .utils.storage_config import (
     get_entity_memory,
 )
 
-from .utils.storage_qdrant import QdrantStorage
+#from .utils.storage_qdrant import QdrantStorage
+# il client QdrantClient non viene usato nel codice crew.py
+#from qdrant_client import QdrantClient
 import os
 from dotenv import load_dotenv
 import wget
-import time 
-import uuid
-from .tools.dalle_tool import download_image_tool
-#from  .tools.qdrant_tool import upsert_knowledge, search_knowledge
-from .utils.storage_config import QdrantStorage
-from .utils.storage_qdrant import QdrantClient
 from .tools.duckduckgo_tool import MyCustomDuckDuckGoTool
+from .tools.dalle_tool import download_image_tool
+
 
  
 ######################tools###############
@@ -29,13 +27,24 @@ from .tools.duckduckgo_tool import MyCustomDuckDuckGoTool
 
 
 
+# @tool("Download Image Tool")
+# def download_image_tool(url: str, fname: str) -> str:
+#     """Tool to download an image given its url and save it using the passed fname."""
+#     ret = None
+#     try:
+#         ret = wget.download(url, fname)
+#     except Exception as e:
+#         print('Error during download:', e)
+#     if ret != fname:
+#         return f"There was an error during the download"
+#     return f"Image successfully saved as {fname}"
 
 load_dotenv()
 
 # qdrant_client = QdrantStorage(type=os.environ.get("COLLECTION"))
 
 #TODO: aggiungere tool
-qdrant_dock= QdrantClient(location=os.environ.get("QDRANT_URL"))
+#qdrant_dock= QdrantClient(location=os.environ.get("QDRANT_URL"))
 
 @CrewBase
 class LinkedInCrew:
@@ -84,38 +93,38 @@ class LinkedInCrew:
 
     # Tool RAG che utilizza la tua classe QdrantStorage personalizzata
     # RagTool si occuperà di istanziare QdrantStorage internamente
-    qdrant_rag_tool = RagTool(
-        rag_storage=QdrantStorage,
-        collection_name=os.getenv("COLLECTION", "default_collection")
-    )
+    # qdrant_rag_tool = RagTool(
+    #     rag_storage=QdrantStorage,
+    #     collection_name=os.getenv("COLLECTION", "default_collection")
+    # )
 
     # --- CARICAMENTO DATI DA PRODUCT_SITES ---
-    print("Starting data ingestion from PRODUCT_SITES variable...")
+    #print("Starting data ingestion from PRODUCT_SITES variable...")
 
     # 1. Leggi la variabile d'ambiente
     product_sites_str = os.getenv("PRODUCT_SITES")
 
     if not product_sites_str:
-        print("❌ Errore: La variabile d'ambiente PRODUCT_SITES non è stata trovata.")
-        print("   Assicurati che sia definita nel tuo file .env")
+        print("Errore: La variabile d'ambiente PRODUCT_SITES non è stata trovata.")
+        print(" Assicurati che sia definita nel tuo file .env")
     else:
         # 2. Dividi la stringa in una lista di URL
         sites_list = [site.strip() for site in product_sites_str.split(',')]
 
         # 3. Itera sulla lista e aggiungi ogni URL alla knowledge base
-        for site_url in sites_list:
-            if site_url:  # Controlla che l'URL non sia vuoto
-                print(f"Adding data from: {site_url} ...")
-                try:
-                    qdrant_rag_tool.add(
-                        data_type="web_page",
-                        url=site_url
-                    )
-                    print(f"✅ Successfully added content from {site_url}")
-                except Exception as e:
-                    print(f"❌ Failed to add {site_url}. Error: {e}")
+        # for site_url in sites_list:
+        #     if site_url:  # Controlla che l'URL non sia vuoto
+        #         print(f"Adding data from: {site_url} ...")
+        #         try:
+        #             qdrant_rag_tool.add(
+        #                 data_type="web_page",
+        #                 url=site_url
+        #             )
+        #             print(f"✅ Successfully added content from {site_url}")
+        #         except Exception as e:
+        #             print(f"❌ Failed to add {site_url}. Error: {e}")
 
-        print("\n🚀 Data ingestion complete!")
+        # print("Data ingestion complete!")
 
     # =============== Agenti ===============
     
@@ -125,15 +134,14 @@ class LinkedInCrew:
             config=self.agents_config["manager"],
             verbose=True,
             allow_delegation=False,
+            tools=[self.web_search_tool],
             llm=self.manager_llm,
-            max_iter=5
-
-        )
+            max_iter=5)
     
     @agent
-    def expert(self) -> Agent:
+    def generalist_expert(self) -> Agent:
         return Agent(
-            config=self.agents_config["expert"],
+            config=self.agents_config["generalist_expert"],
             verbose=True,
             allow_delegation=False,
             llm=self.llm,
@@ -148,7 +156,8 @@ class LinkedInCrew:
             verbose=True,
             allow_delegation=False,
             llm=self.llm,
-            tools=[self.qdrant_rag_tool],
+            #self.qdrant_rag_tool
+            tools=[self.scraper_tool],
             max_iter=5
         )
 
@@ -191,7 +200,7 @@ class LinkedInCrew:
 
     @task
     def technical_content_task(self) -> Task:
-        return Task(config=self.tasks_config["technical_content"], agent=self.expert())
+        return Task(config=self.tasks_config["technical_content"], agent=self.generalist_expert())
 
     @task
     def product_content_task(self) -> Task:
@@ -232,7 +241,7 @@ class LinkedInCrew:
             return Crew(
                 agents=[
                     self.manager(), 
-                    self.expert(),
+                    self.generalist_expert(),
                     self.copywriter(), 
                     self.designer(), 
                     self.planner()
