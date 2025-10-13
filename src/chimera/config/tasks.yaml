@@ -46,22 +46,24 @@ technical_content:
 
 product_content:
   description: >
-    Use the internal company knowledge base (Qdrant) to search and answer to the question about {topic} using the qdrant_search_tool.
-    When you use the Qdrant Search Tool, always consider that the query is the {topic} from the user.
-    usually matching the topic or user question.
+    Use the internal company knowledge base to search and answer to the question about {topic} using the search_knowledge.
+    When you use the tools, always consider that the query is the topic from the user.
     Your goal is to provide a clear and factual explanation based only on official company data and sources.  
-    If the relevant information is missing, explicitly mention that no data was found in the internal database.  
-    You must not consider what is written in the editorial plan and do not search on web but you have to use the information storaged in qdrant.
+    If the information is not in the kneledge base, use the scraper tool and upsert_knowledge tool to retrieve information. 
+    You can only scrape from the following sites: {product_site}
+    Every time that you scrape something, you have to save it on the knowledge base with the upsert_knowledge
+    If the relevant information is missing, explicitly mention that no data was found in online or in the internal database.  
+    You must not consider what is written in the editorial plan.
     **guidelines**
-    - Use the qdrant_search_tool to search from the internal knowledge base (Qdrant) and extract information about {topic}.
-    -Write a clear, structured summary of about 200–300 words.
+    - Use the tools to search from the internal knowledge base and extract information about {topic}.
+    - Write a clear, structured summary of about 200–300 words.
     - Keep the response accurate, concise, and professional, using a tone suitable for IT and technical audiences.  
 
   expected_output: >
     A Markdown file saved in {text_dir} that includes:  
     - The topic or question: {topic}  
     - A concise, well-structured answer based on retrieved data  
-    - References to company sources (URLs, metadata, or Qdrant payload details)  
+    - References to company sources (URLs, metadata)  
 
   agent: product_expert
   output_file: "{text_dir}/product_content_{topic}.md"

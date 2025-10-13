@@ -67,7 +67,7 @@ class QdrantStorage(RAGStorage):
         metadata = metadata or {}
         metadata.update({
             'content_hash': content_hash,
-            'document': value  # 🔹 Necessario per il RAG
+            'document': value  # Necessario per il RAG
         })
 
         self.client.add(
