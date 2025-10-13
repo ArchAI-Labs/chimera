@@ -1,0 +1,40 @@
+[project]
+name = "chimera"
+version = "0.0.1"
+description = "chimera using crewAI"
+authors = [{ name = "Nicola Procopio", email = "nicola.procopio@acsoftware.it" }]
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "crewai[tools]>=0.98.0,<1.0.0",
+    "esprima==4.0.1",
+    "tree-sitter==0.24.0",
+    "tree-sitter-languages==1.10.2",
+    "panel==1.6.0",
+    "google-generativeai==0.8.4",
+    "groq==0.25.0",
+    "pytest==8.2.1",
+    "qdrant-client[fastembed]==1.14.2",
+    "jinaai>=0.2.0",
+    "fitz",
+    "pymupdf==1.25.3",
+    "javalang",
+    "wget",
+    "duckduckgo-search==8.1.1",
+    "langchain_community",
+    "ddgs",
+
+]
+
+[project.scripts]
+code_explainer = "chimera.main:run"
+run_crew = "chimera.main:run"
+train = "chimera.main:train"
+replay = "chimera.main:replay"
+test = "chimera.main:test"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.crewai]
+type = "crew"
