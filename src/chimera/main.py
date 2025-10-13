@@ -47,6 +47,9 @@ def run():
     os.makedirs(text_dir, exist_ok=True)
     os.makedirs(image_dir, exist_ok=True)
 
+    # product_sites_str = os.getenv("PRODUCT_SITES", "")
+    # sites_list = [s.strip() for s in product_sites_str.split(",") if s.strip()]
+
     # Inputs per la crew
     inputs = {
         "num_posts": num_posts,
@@ -55,6 +58,7 @@ def run():
         "text_dir": text_dir,
         "image_dir": image_dir,
         "topic": topic,
+        #"product_site": sites_list if sites_list else ""
     }
     print(inputs)
 
@@ -64,9 +68,9 @@ def run():
     #linkedin_crew = LinkedInCrew().crew()
 
     # 1. Crea un'istanza della classe
-    crew_builder = LinkedInCrew()
-
-    # 2. Assegna il dizionario 'inputs' all'attributo dell'istanza
+    crew_builder = LinkedInCrew(inputs=inputs)
+    
+    # 2. Assegna il dizionario 'inputs' all'attributo dell'istanza MODIFICA
     crew_builder.inputs = inputs
 
     # 3. Ora chiama il metodo .crew() sull'istanza che contiene gli input
@@ -74,6 +78,7 @@ def run():
 
     print("Starting content creation pipeline...")
     print("=" * 60)
+
 
     # Avvio della crew
     result = linkedin_crew.kickoff(inputs=inputs)
