@@ -1,28 +1,29 @@
 editorial_plan:
   description: >
-    Based on {expert_type} conduct web research to identify trending discussions, reports, and professional debates about {topic}.  
+    Conduct web research about {topic} using your search tools.  
     Based on your findings, define a **strategic editorial plan** with {num_posts} {frequency} LinkedIn posts.  
 
-      Each post must specify both:  
-      - **Content Type**: Industry Insights, Career Skills, Company Success Stories, Thought Leadership, Academic Highlights, Student Perspectives.  
-      - **Target Audience** (IT-oriented):  
-        - Primary: CTOs, CIOs, IT Managers, Business Leaders in tech  
-        - Secondary: Researchers, Developers, Tech Enthusiasts  
-        - Tertiary: Students, Early-Career Professionals, HR Tech Specialists  
+    Each post must include:
+    - **Content Type**: (Industry Insight, Career Skill, Thought Leadership, Academic Highlight, Student Perspective).  
+    - **Target Audience**:  
+      - Primary: CTOs, CIOs, IT Managers, Business Leaders  
+      - Secondary: Researchers, Developers, Tech Enthusiasts  
+      - Tertiary: Students, Early-Career Professionals, HR Tech Specialists  
 
     **Guidelines:**  
-    - Posts must be distributed approximately equally between **Primary** and **Secondary** audiences.  
-    - Tertiary audiences may appear occasionally but should not exceed 20% of posts.  
+    - Distribute posts mostly between Primary and Secondary audiences.  
+    - Tertiary audiences may appear but max 20%.  
     - Titles must be short and impactful.  
-    - Descriptions must use examples or data, not generic statements.  
+    - Descriptions must be based on real examples or data (no vague statements).  
+
   expected_output: >
-    A detailed editorial plan in Markdown format, saved in {text_dir}, including:
-    - {num_posts} unique post titles
-    - A 2–3 sentence description for each post
-    - The **content type** (Industry Insight, Career Skill, Success Story, Thought Leadership, Academic Highlight, Student Perspective)
-    - The **target audience** (Business Leaders, Researchers, Students, Recruiters)
-    - Suggested hashtags
-    - Indication of publishing cadence ({frequency})
+    A Markdown file in {text_dir} with:  
+    - {num_posts} post titles  
+    - 2–3 sentence description for each post  
+    - Content Type  
+    - Target Audience  
+    - Suggested hashtags  
+    - Indication of publishing cadence ({frequency})  
 
   agent: manager
   output_file: "{text_dir}/editorial_plan_{topic}.md"
@@ -30,44 +31,42 @@ editorial_plan:
 
 technical_content:
   description: >
-    Provide depth and credibility using industry and academic sources according 
-    to the {topic}.  
-
-    **Requirements:**  
-    - Explain the concepts behind each post in 200–300 words.  
-    - Provide at least one practical example, analogy, or short case study.  
-    - Include relevant trends, frameworks, or tools connected to {topic}.  
-    - Mention references, research papers, or company reports when applicable.  
+    Enrich the editorial plan with technical explanations, examples, and insights about {topic}.  
+    Use additional web search if needed to validate information.
 
   expected_output: >
-    A single Markdown file in {text_dir}, containing {num_posts} technical drafts:  
-    - Title  
-    - Technical explanation (200–300 words)  
-    - Example, analogy, or case study  
-    - References or sources  
+    A detailed draft for each of the {num_posts} posts, saved in a single Markdown file, including:
+    - 200–300 words explanation
+    - At least one example, analogy, or case study
+    - Mention of current trends or innovations
+    - References when applicable
 
   agent: generalist_expert
   output_file: "{text_dir}/technical_content_{topic}.md"
 
-
 product_content:
   description: >
-    Use company-specific knowledge scraped from {product_site}  based on {topic}. 
-    Provide accurate and professional answers strictly based on company products, documentation, and services.
-
-    Guidelines:
-    - Always cite which source you used.
-    - Avoid speculation; if the knowledge base does not contain the answer, explicitly state it.
-    - Keep responses clear, concise, and IT-professional.
+    Use the internal company knowledge base (Qdrant) to search and answer to the question about {topic} using the qdrant_search_tool.
+    When you use the Qdrant Search Tool, always consider that the query is the {topic} from the user.
+    usually matching the topic or user question.
+    Your goal is to provide a clear and factual explanation based only on official company data and sources.  
+    If the relevant information is missing, explicitly mention that no data was found in the internal database.  
+    You must not consider what is written in the editorial plan and do not search on web but you have to use the information storaged in qdrant.
+    **guidelines**
+    - Use the qdrant_search_tool to search from the internal knowledge base (Qdrant) and extract information about {topic}.
+    -Write a clear, structured summary of about 200–300 words.
+    - Keep the response accurate, concise, and professional, using a tone suitable for IT and technical audiences.  
 
   expected_output: >
-    A Markdown file in {text_dir} containing:
-    - The original question from the user
-    - Structured response (300–400 words)
-    - References to specific company pages
+    A Markdown file saved in {text_dir} that includes:  
+    - The topic or question: {topic}  
+    - A concise, well-structured answer based on retrieved data  
+    - References to company sources (URLs, metadata, or Qdrant payload details)  
 
   agent: product_expert
   output_file: "{text_dir}/product_content_{topic}.md"
+
+
 
 # knowledge_saving:
 #   description: >

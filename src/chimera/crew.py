@@ -1,6 +1,6 @@
 from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
-from crewai_tools import SerperDevTool, FileWriterTool, DallETool, ScrapeWebsiteTool, RagTool
+from crewai_tools import SerperDevTool, FileWriterTool, DallETool, ScrapeWebsiteTool
 from crewai.tools import tool
 from .utils.utils import print_output, check_memory_dir, LLM_Config
 from .utils.storage_config import (
@@ -8,43 +8,19 @@ from .utils.storage_config import (
     get_short_term_memory,
     get_entity_memory,
 )
-
-#from .utils.storage_qdrant import QdrantStorage
-# il client QdrantClient non viene usato nel codice crew.py
-#from qdrant_client import QdrantClient
 import os
 from dotenv import load_dotenv
-import wget
 from .tools.duckduckgo_tool import MyCustomDuckDuckGoTool
 from .tools.dalle_tool import download_image_tool
-
-
- 
-######################tools###############
-
-#TODO spostare in un file in tools
-#####Dall-E tools####
+from .tools.qdrant_tool import qdrant_search_tool
+from .utils.storage_qdrant import QdrantStorage
+#from crewai.memory.external.external_memory import ExternalMemory
 
 
 
-# @tool("Download Image Tool")
-# def download_image_tool(url: str, fname: str) -> str:
-#     """Tool to download an image given its url and save it using the passed fname."""
-#     ret = None
-#     try:
-#         ret = wget.download(url, fname)
-#     except Exception as e:
-#         print('Error during download:', e)
-#     if ret != fname:
-#         return f"There was an error during the download"
-#     return f"Image successfully saved as {fname}"
 
 load_dotenv()
 
-# qdrant_client = QdrantStorage(type=os.environ.get("COLLECTION"))
-
-#TODO: aggiungere tool
-#qdrant_dock= QdrantClient(location=os.environ.get("QDRANT_URL"))
 
 @CrewBase
 class LinkedInCrew:
@@ -91,33 +67,17 @@ class LinkedInCrew:
     dalle_tool = DallETool(model="dall-e-3", size="1024x1024", quality="standard", n=1)
     scraper_tool = ScrapeWebsiteTool()
 
-<<<<<<< HEAD
-    # Tool RAG che utilizza la tua classe QdrantStorage personalizzata
-    # RagTool si occuperà di istanziare QdrantStorage internamente
-    # qdrant_rag_tool = RagTool(
-    #     rag_storage=QdrantStorage,
-    #     collection_name=os.getenv("COLLECTION", "default_collection")
-    # )
-
-    # --- CARICAMENTO DATI DA PRODUCT_SITES ---
-    #print("Starting data ingestion from PRODUCT_SITES variable...")
-=======
     # # Tool RAG che utilizza la tua classe QdrantStorage personalizzata
     # # RagTool si occuperà di istanziare QdrantStorage internamente
 
-    qdrant_client = QdrantStorage(type=os.getenv("COLLECTION", "default_collection"))
-    qdrant_rag_tool = RagTool(rag_storage=qdrant_client)
->>>>>>> origin/develop
-
-
-<<<<<<< HEAD
-    if not product_sites_str:
-        print("Errore: La variabile d'ambiente PRODUCT_SITES non è stata trovata.")
-        print(" Assicurati che sia definita nel tuo file .env")
-    else:
-        # 2. Dividi la stringa in una lista di URL
-=======
-    # Il metodo di caricamento dati può tornare "privato" (con _)
+    qdrant_client = QdrantStorage(type=os.getenv("COLLECTION", "default_collection")) #usa collection nell'env altrimenti default.
+    #qdrant_rag_tool = RagTool(rag_storage=qdrant_client)
+    #modifica
+    # qdrant_rag_tool = RagTool(
+    # rag_storage=qdrant_client,
+    # name="qdrant_rag_tool",
+    # description="Use this tool to search the internal company knowledge base stored in Qdrant to extract information about the topic.")
+    
     def _scrape_and_load_data(self):
         print("🚀 Starting data ingestion from PRODUCT_SITES variable...")
         product_sites_str = os.getenv("PRODUCT_SITES")
@@ -126,48 +86,61 @@ class LinkedInCrew:
             print("❌ Errore: La variabile d'ambiente PRODUCT_SITES non è stata trovata.")
             return
         
->>>>>>> origin/develop
         sites_list = [site.strip() for site in product_sites_str.split(',')]
         scraper = self.scraper_tool 
 
-<<<<<<< HEAD
-        # 3. Itera sulla lista e aggiungi ogni URL alla knowledge base
-        # for site_url in sites_list:
-        #     if site_url:  # Controlla che l'URL non sia vuoto
-        #         print(f"Adding data from: {site_url} ...")
-        #         try:
-        #             qdrant_rag_tool.add(
-        #                 data_type="web_page",
-        #                 url=site_url
-        #             )
-        #             print(f"✅ Successfully added content from {site_url}")
-        #         except Exception as e:
-        #             print(f"❌ Failed to add {site_url}. Error: {e}")
+        # Usa LangChain per il chunking
+        try:
+            from langchain.text_splitter import RecursiveCharacterTextSplitter
+        except ImportError:
+            print("LangChain non installato. Installa con: pip install langchain")
+            return
 
-        # print("Data ingestion complete!")
-=======
+        splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
+
         for site_url in sites_list:
             if not site_url:
                 continue
             
-            print(f"🔎 Scraping data from: {site_url} ...")
+            print(f"Scraping data from: {site_url} ...")
             try:
                 scraped_content = scraper.run(website_url=site_url)
-                
-                print(f"💾 Saving content from {site_url} to Qdrant...")
-                self.qdrant_client.save(
-                    value=scraped_content, 
-                    metadata={'source_url': site_url}
-                )
-                print(f"✅ Successfully scraped and saved content from {site_url}")
+
+                #  Pulizia da boilerplate
+                if "The following text is scraped website content:" in scraped_content:
+                    scraped_content = scraped_content.split("The following text is scraped website content:")[-1].strip()
+
+                #  Preprocessing base
+                import re
+                scraped_content = re.sub(r'\s+', ' ', scraped_content).strip()
+
+                # Skip contenuti inutili o vuoti
+                if not scraped_content or "404" in scraped_content or len(scraped_content) < 200:
+                    print(f"Contenuto vuoto o non valido da {site_url}, skip.")
+                    continue
+
+                # Chunking
+                chunks = splitter.split_text(scraped_content)
+                print(f"Suddiviso in {len(chunks)} chunk per l'indicizzazione.")
+
+                # Salvataggio in Qdrant
+                for i, chunk in enumerate(chunks):
+                    self.qdrant_client.save(
+                        value=chunk, 
+                        metadata={
+                            'source_url': site_url,
+                            'chunk_index': i
+                        }
+                    )
+
+                print(f"✅ Successfully scraped and indexed {len(chunks)} chunks from {site_url}")
 
             except Exception as e:
                 print(f"❌ Failed to process {site_url}. Error: {e}")
         
-        print("\n✨ Data ingestion complete!")
->>>>>>> origin/develop
+        print("Data ingestion complete!")
 
-    # =============== Agenti ===============
+        # =============== Agenti ===============
     
     @agent
     def manager(self) -> Agent:
@@ -192,17 +165,15 @@ class LinkedInCrew:
 
     @agent
     def product_expert(self) -> Agent:
+        #AGGIUNTA DI UN LOG PER VEDERE QUANDO SUBENTRA
+        print("Attivato agente: Product Expert (usa RAG + Scraper)")
         return Agent(
             config=self.agents_config["product_expert"],
             verbose=True,
             allow_delegation=False,
             llm=self.llm,
-<<<<<<< HEAD
-            #self.qdrant_rag_tool
-            tools=[self.scraper_tool],
-=======
-            tools=[self.scraper_tool, self.qdrant_rag_tool],
->>>>>>> origin/develop
+            #memory=True,
+            tools=[qdrant_search_tool],  #[self.scraper_tool]
             max_iter=5
         )
 
@@ -249,6 +220,8 @@ class LinkedInCrew:
 
     @task
     def product_content_task(self) -> Task:
+        #AGGIUNTA PRIMO LOG.
+        print(f"Sto costruendo il task con topic: {self.inputs.get('topic')}")
         return Task(config=self.tasks_config["product_content"], agent=self.product_expert())
     
     @task
@@ -270,6 +243,9 @@ class LinkedInCrew:
 
         # 2. Ora gestisci i tuoi input in modo sicuro.
         self.inputs = inputs if inputs is not None else {}
+        #AGGIUNTA PER VEDERE L'INPUT- SECONDO LOG
+        print(f"INPUT RICEVUTI DALL’UTENTE: {self.inputs}")
+
 
         # 3. Avvia il caricamento dei dati nella knowledge base.
         #    La logica è di nuovo incapsulata e si avvia alla creazione.
@@ -324,6 +300,7 @@ class LinkedInCrew:
                 process=Process.sequential,
                 verbose=True,
                 chat_llm=self.llm,
+                #external_memory=ExternalMemory(storage=self.qdrant_client)
                 # memory=True,
                 # long_term_memory=self.ltm,
                 # short_term_memory=self.stm,
@@ -342,4 +319,3 @@ class LinkedInCrew:
                 # short_term_memory=self.stm,
                 # entity_memory=self.entity,
             )
-
