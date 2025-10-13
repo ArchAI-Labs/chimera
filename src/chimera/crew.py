@@ -12,7 +12,7 @@ import os
 from dotenv import load_dotenv
 from .tools.duckduckgo_tool import MyCustomDuckDuckGoTool
 from .tools.dalle_tool import download_image_tool
-from .tools.qdrant_tool import qdrant_search_tool
+from .tools.qdrant_tool import search_knowledge, upsert_knowledge
 from .utils.storage_qdrant import QdrantStorage
 #from crewai.memory.external.external_memory import ExternalMemory
 
@@ -137,7 +137,6 @@ class LinkedInCrew:
 
             except Exception as e:
                 print(f"❌ Failed to process {site_url}. Error: {e}")
-        
         print("Data ingestion complete!")
 
         # =============== Agenti ===============
@@ -173,7 +172,7 @@ class LinkedInCrew:
             allow_delegation=False,
             llm=self.llm,
             #memory=True,
-            tools=[qdrant_search_tool],  #[self.scraper_tool]
+            tools=[search_knowledge, upsert_knowledge, self.scraper_tool],  #[self.scraper_tool]
             max_iter=5
         )
 
@@ -249,7 +248,7 @@ class LinkedInCrew:
 
         # 3. Avvia il caricamento dei dati nella knowledge base.
         #    La logica è di nuovo incapsulata e si avvia alla creazione.
-        self._scrape_and_load_data()
+        # self._scrape_and_load_data()
 
     # =============== Crew ===============
     @crew
