@@ -13,12 +13,19 @@ load_dotenv()
 from qdrant_client.qdrant_fastembed import TextEmbedding
 embedder = TextEmbedding(model_name=os.getenv("EMBEDDER", "jinaai/jina-embeddings-v2-base-en"))
 
-collection_name = "crew_knowledge"
-client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+collection_name = os.getenv("COLLECTION")
+# client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
 #COLLECTION = "crew_knowledge"
-COLLECTION = os.getenv("COLLECTION")
+# COLLECTION = os.getenv("COLLECTION")
 
-import uuid
+if os.getenv("QDRANT_MODE") == "memory":
+    client = QdrantClient(":memory:")
+elif os.getenv("QDRANT_MODE") == "cloud":
+    client = QdrantClient(host=os.getenv("QDRANT_HOST"), api_key=os.getenv("QDRANT_API_KEY"))
+elif os.getenv("QDRANT_MODE") == "docker":
+    client = QdrantClient(url=os.getenv("QDRANT_URL"))
+else:
+    raise ValueError("Qdrant has 3 mode: memory, cloud or docker")
 
 def stable_id(text: str) -> str:
     norm = " ".join(text.split()).strip().lower()
@@ -72,7 +79,7 @@ def search_knowledge(query: str) -> str:
     search_results = client.query_points(
         collection_name=collection_name,
         query=query_embedding,
-        using= 'fast-jina-embeddings-v2-base-en',
+        using= os.getenv("VECTOR"),
         limit=10
     ).points
     res = []
