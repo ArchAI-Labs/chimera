@@ -15,29 +15,29 @@ class QdrantStorage(RAGStorage):
         #  Usa sempre lo stesso modello di embedding
         self.embedder = TextEmbedding(model_name=os.getenv("EMBEDDER", "jinaai/jina-embeddings-v2-base-en"))
 
-    # def search(self, query: str, limit: int = 3, filter: Optional[dict] = None, score_threshold: float = 0) -> List[Any]:
-    #     print(f"🔍 [QdrantStorage] Query ricevuta: '{query}'")
-    #     query_vector = self.embedder.encode(query)[0]
+    def search(self, query: str, limit: int = 3, filter: Optional[dict] = None, score_threshold: float = 0) -> List[Any]:
+        print(f"🔍 [QdrantStorage] Query ricevuta: '{query}'")
+        query_vector = self.embedder.embed(query)[0]
 
-    #     response = self.client.search(
-    #         collection_name=self.type,
-    #         query_vector=query_vector,
-    #         limit=limit,
-    #         score_threshold=score_threshold
-    #     )
+        response = self.client.search(
+            collection_name=self.type,
+            query_vector=query_vector,
+            limit=limit,
+            score_threshold=score_threshold
+        )
 
-    #     results = [
-    #         {
-    #             "id": point.id,
-    #             "metadata": point.payload,
-    #             "context": point.payload.get("document", ""),
-    #             "score": point.score,
-    #         }
-    #         for point in response
-    #     ]
+        results = [
+            {
+                "id": point.id,
+                "metadata": point.payload,
+                "context": point.payload.get("document", ""),
+                "score": point.score,
+            }
+            for point in response
+        ]
 
-    #     print(f"📊 [QdrantStorage] Risultati trovati: {len(results)}")
-    #     return results
+        print(f"📊 [QdrantStorage] Risultati trovati: {len(results)}")
+        return results
 
     def reset(self) -> None:
         self.client.delete_collection(self.type)
