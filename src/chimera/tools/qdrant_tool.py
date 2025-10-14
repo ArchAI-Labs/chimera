@@ -6,32 +6,45 @@ import time
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 
-
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from qdrant_client.qdrant_fastembed import TextEmbedding
 
+# chunk dei testi.
 splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
 
+# carica le variabili d'ambiente
 load_dotenv()
-from qdrant_client.qdrant_fastembed import TextEmbedding
+
+# embedder e variabili d'ambiente
 embedder = TextEmbedding(model_name=os.getenv("EMBEDDER", "jinaai/jina-embeddings-v2-base-en"))
+collection_name = os.getenv("COLLECTION", "crew_knowledge")
+VECTOR_NAME = os.getenv("VECTOR", "fast-jina-embeddings-v2-base-en")
 
-collection_name = os.getenv("COLLECTION")
-client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
-#COLLECTION = "crew_knowledge"
-# COLLECTION = os.getenv("COLLECTION")
+# modalità di utilizzo
+mode = os.getenv("QDRANT_MODE", "memory")
+print(f"Qdrant running in {mode} mode.")
 
-if os.getenv("QDRANT_MODE") == "memory":
+if mode == "memory":
     client = QdrantClient(":memory:")
-elif os.getenv("QDRANT_MODE") == "cloud":
+elif mode == "cloud":
     client = QdrantClient(host=os.getenv("QDRANT_HOST"), api_key=os.getenv("QDRANT_API_KEY"))
-elif os.getenv("QDRANT_MODE") == "docker":
-    client = QdrantClient(url=os.getenv("QDRANT_URL"))
+elif mode == "docker":
+    client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
 else:
-    raise ValueError("Qdrant has 3 mode: memory, cloud or docker")
+    raise ValueError("Qdrant has 3 modes: memory, cloud or docker")
+
+VECTOR_SIZE = getattr(embedder, "embedding_size", 768)  # uses embedder size if available
+DISTANCE = Distance.COSINE
+existing = {c.name for c in client.get_collections().collections}
+if collection_name not in existing:
+    client.create_collection(
+        collection_name=collection_name,
+        vectors_config={VECTOR_NAME: VectorParams(size=VECTOR_SIZE, distance=DISTANCE)},
+    )
+# ---------------------------------------------------
 
 def stable_id(text: str) -> str:
     norm = " ".join(text.split()).strip().lower()
-    # return hashlib.sha256(norm.encode("utf-8")).hexdigest()
     return uuid.uuid5(uuid.NAMESPACE_URL, norm).hex
 
 @tool("Write to knowledge base")
@@ -55,12 +68,10 @@ def upsert_knowledge(text: str, url: str) -> str:
             points=[
                 PointStruct(
                     id=deterministic_id,
-                    vector={
-                        "fast-jina-embeddings-v2-base-en": text_embedding,
-                    },
+                    vector={VECTOR_NAME: text_embedding},  # use env VECTOR consistently
                     payload={
-                        'document':chunk,
-                        'source_url':url
+                        'document': chunk,
+                        'source_url': url
                     }
                 )
             ],
@@ -83,13 +94,12 @@ def search_knowledge(query: str) -> str:
     search_results = client.query_points(
         collection_name=collection_name,
         query=query_embedding,
-        using= os.getenv("VECTOR"),
+        using=VECTOR_NAME,  # same VECTOR as in upsert
         limit=10
     ).points
     res = []
     for result in search_results:
         res.append(f"{result.payload['document']}\n{result.payload['source_url']}\n")
-        # print(f"ID: {result.id}, Score: {result.score} Payload: {result.payload}")
     if not res:
         return "(no results)"
     return "\n".join(res)
