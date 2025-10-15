@@ -60,11 +60,18 @@ product_content:
     - Write a clear, structured summary of about 200–300 words.
     - Keep the response accurate, concise, and professional, using a tone suitable for IT and technical audiences.  
 
+  # expected_output: >
+  #   A Markdown file saved in {text_dir} that includes:  
+  #   - The topic or question: {topic}  
+  #   - A concise, well-structured answer based on retrieved data  
+  #   - References to company sources (URLs, metadata)  
   expected_output: >
     A Markdown file saved in {text_dir} that includes:  
     - The topic or question: {topic}  
     - A concise, well-structured answer based on retrieved data  
-    - References to company sources (URLs, metadata)  
+    - References to company sources (URLs, metadata)
+    - References to the company knowledge base (e.g. github) from which you searched the answer
+
 
   agent: product_expert
   output_file: "{text_dir}/product_content_{topic}.md"
