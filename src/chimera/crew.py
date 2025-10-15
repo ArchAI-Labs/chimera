@@ -173,7 +173,7 @@ class LinkedInCrew:
             llm=self.llm,
             #memory=True,
             tools=[search_knowledge, upsert_knowledge, self.scraper_tool],  #[self.scraper_tool]
-            max_iter=5
+            max_iter=10
         )
 
     @agent
