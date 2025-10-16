@@ -5,7 +5,6 @@ import uuid
 import time
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
-
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from qdrant_client.qdrant_fastembed import TextEmbedding
 
@@ -16,7 +15,9 @@ splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
 load_dotenv()
 
 # embedder e variabili d'ambiente
-embedder = TextEmbedding(model_name=os.getenv("EMBEDDER", "jinaai/jina-embeddings-v2-base-en"))
+embedder = TextEmbedding(
+    model_name=os.getenv("EMBEDDER", "jinaai/jina-embeddings-v2-base-en")
+)
 collection_name = os.getenv("COLLECTION", "crew_knowledge")
 VECTOR_NAME = os.getenv("VECTOR", "fast-jina-embeddings-v2-base-en")
 
@@ -27,13 +28,17 @@ print(f"Qdrant running in {mode} mode.")
 if mode == "memory":
     client = QdrantClient(":memory:")
 elif mode == "cloud":
-    client = QdrantClient(host=os.getenv("QDRANT_HOST"), api_key=os.getenv("QDRANT_API_KEY"))
+    client = QdrantClient(
+        host=os.getenv("QDRANT_HOST"), api_key=os.getenv("QDRANT_API_KEY")
+    )
 elif mode == "docker":
     client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
 else:
     raise ValueError("Qdrant has 3 modes: memory, cloud or docker")
 
-VECTOR_SIZE = getattr(embedder, "embedding_size", 768)  # uses embedder size if available
+VECTOR_SIZE = getattr(
+    embedder, "embedding_size", 768
+)  # uses embedder size if available
 DISTANCE = Distance.COSINE
 existing = {c.name for c in client.get_collections().collections}
 if collection_name not in existing:
@@ -43,9 +48,11 @@ if collection_name not in existing:
     )
 # ---------------------------------------------------
 
+
 def stable_id(text: str) -> str:
     norm = " ".join(text.split()).strip().lower()
     return uuid.uuid5(uuid.NAMESPACE_URL, norm).hex
+
 
 @tool("Write to knowledge base")
 def upsert_knowledge(text: str, url: str) -> str:
@@ -58,25 +65,25 @@ def upsert_knowledge(text: str, url: str) -> str:
     Example call: upsert_knowledge(text="Mario's favorite color is blue.", url="http:/website.com")
     """
     import hashlib, uuid
+
     chunks = splitter.split_text(text)
     for chunk in chunks:
-        content_hash = hashlib.sha256(chunk.encode('utf-8')).hexdigest()
+        content_hash = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
         deterministic_id = str(uuid.UUID(content_hash[:32]))
         text_embedding = next(iter(embedder.embed(chunk)))
         client.upsert(
             collection_name=collection_name,
             points=[
                 PointStruct(
+                    # TODO check se il point è caricato piu volte a parità di query.
                     id=deterministic_id,
                     vector={VECTOR_NAME: text_embedding},  # use env VECTOR consistently
-                    payload={
-                        'document': chunk,
-                        'source_url': url
-                    }
+                    payload={"document": chunk, "source_url": url},
                 )
             ],
         )
     return f"Saved data from {url}"
+
 
 @tool("Search knowledge base")
 def search_knowledge(query: str) -> str:
@@ -95,7 +102,7 @@ def search_knowledge(query: str) -> str:
         collection_name=collection_name,
         query=query_embedding,
         using=VECTOR_NAME,  # same VECTOR as in upsert
-        limit=10
+        limit=10,
     ).points
     res = []
     for result in search_results:
