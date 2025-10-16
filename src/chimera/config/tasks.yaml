@@ -49,8 +49,9 @@ product_content:
     Use the internal company knowledge base to search and answer to the question about {topic} using the search_knowledge.
     When you use the tools, always consider that the query is the topic from the user.
     Your goal is to provide a clear and factual explanation based only on official company data and sources.  
-    If the information is not in the kneledge base, use the scraper tool and upsert_knowledge tool to retrieve information. 
-    You can only scrape from the following sites: {product_site}
+    If the information is not in the knowledge base, use the scraper tool and upsert_knowledge tool to retrieve information. 
+    You can only scrape from the following sites: {product_site}. After that you have completed this part, use the search_knowledge
+    to answer to the query.
     Every time that you scrape something, you have to save it on the knowledge base with the upsert_knowledge
     If the relevant information is missing, explicitly mention that no data was found in online or in the internal database.  
     You must not consider what is written in the editorial plan.
@@ -59,11 +60,18 @@ product_content:
     - Write a clear, structured summary of about 200–300 words.
     - Keep the response accurate, concise, and professional, using a tone suitable for IT and technical audiences.  
 
+  # expected_output: >
+  #   A Markdown file saved in {text_dir} that includes:  
+  #   - The topic or question: {topic}  
+  #   - A concise, well-structured answer based on retrieved data  
+  #   - References to company sources (URLs, metadata)  
   expected_output: >
     A Markdown file saved in {text_dir} that includes:  
     - The topic or question: {topic}  
     - A concise, well-structured answer based on retrieved data  
-    - References to company sources (URLs, metadata)  
+    - References to company sources (URLs, metadata)
+    - References to the company knowledge base (e.g. github) from which you searched the answer
+
 
   agent: product_expert
   output_file: "{text_dir}/product_content_{topic}.md"
