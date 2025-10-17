@@ -33,6 +33,7 @@ elif mode == "docker":
 else:
     raise ValueError("Qdrant has 3 modes: memory, cloud or docker")
 
+# --- NEW: create collection if missing (minimal) ---
 VECTOR_SIZE = getattr(embedder, "embedding_size", 768)  # uses embedder size if available
 DISTANCE = Distance.COSINE
 existing = {c.name for c in client.get_collections().collections}
@@ -46,7 +47,6 @@ if collection_name not in existing:
 def stable_id(text: str) -> str:
     norm = " ".join(text.split()).strip().lower()
     return uuid.uuid5(uuid.NAMESPACE_URL, norm).hex
-
 @tool("Write to knowledge base")
 def upsert_knowledge(text: str, url: str) -> str:
     """
@@ -60,15 +60,32 @@ def upsert_knowledge(text: str, url: str) -> str:
     import hashlib, uuid
     chunks = splitter.split_text(text)
     for chunk in chunks:
+        # crea un ID deterministico basato sull’hash del testo
         content_hash = hashlib.sha256(chunk.encode('utf-8')).hexdigest()
         deterministic_id = str(uuid.UUID(content_hash[:32]))
+
+        # controllo se il punto esiste già
+        try:
+            existing = client.retrieve(
+                collection_name=collection_name,
+                ids=[deterministic_id]
+            )
+            # Se esiste già, salta questo chunk
+            if existing and existing[0].payload:
+                print(f"Punto già esistente per {url}, skip...")
+                continue
+        except Exception:
+            # Nessun punto trovato: procedo con l’inserimento
+            pass
+
+        # calcolo embedding e salvo
         text_embedding = next(iter(embedder.embed(chunk)))
         client.upsert(
             collection_name=collection_name,
             points=[
                 PointStruct(
                     id=deterministic_id,
-                    vector={VECTOR_NAME: text_embedding},  # use env VECTOR consistently
+                    vector={VECTOR_NAME: text_embedding},
                     payload={
                         'document': chunk,
                         'source_url': url
@@ -77,6 +94,7 @@ def upsert_knowledge(text: str, url: str) -> str:
             ],
         )
     return f"Saved data from {url}"
+
 
 @tool("Search knowledge base")
 def search_knowledge(query: str) -> str:
