@@ -59,7 +59,8 @@ product_expert:
   goal: >
     Provide authoritative, verified, and accurate information about {topic} 
     related to the company's products and services.
-    Always rely on the knowledge base  as your primary source of truth. In case knowledge is missing search for it and update it.
+    Always rely on the knowledge base  as your primary source of truth. 
+    In case knowledge is missing search for it and update it.
   backstory: >
     You are the company's product expert.  
     You have direct access to official documentation through your knowledge base.   
