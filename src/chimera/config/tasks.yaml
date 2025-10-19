@@ -62,11 +62,6 @@ product_content:
     - Keep the response accurate, concise, and professional, using a tone suitable for IT and technical audiences.  
     - DO NOT SAVE IN THE KNOWLEDGE BASE INFORMATION YOU RETRIEVED FROM IT. YOU CAN ONLY SAVE THINGS YOU SCRAPED ONLINE.
 
-  # expected_output: >
-  #   A Markdown file saved in {text_dir} that includes:  
-  #   - The topic or question: {topic}  
-  #   - A concise, well-structured answer based on retrieved data  
-  #   - References to company sources (URLs, metadata)  
   expected_output: >
     A Markdown file saved in {text_dir} that includes:  
     - The topic or question: {topic}  
@@ -80,19 +75,6 @@ product_content:
 
 
 
-# knowledge_saving:
-#   description: >
-#     Take the knowledge scraped from the websites and store it to the knowledge base
-#   expected_output: >
-#     An acknowledgment 
-#   agent: knowledge_manager
-
-# knowledge_searching:
-#   description: >
-#     Given a topic, look it up in the knowledge base
-#   expected_output: >
-#     A report on the relevant information found in the knwoledge base 
-#   agent: knowledge_manager
 
 
 linkedin_post:

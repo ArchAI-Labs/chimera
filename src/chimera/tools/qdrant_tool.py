@@ -9,44 +9,91 @@ from qdrant_client.models import Distance, VectorParams, PointStruct
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from qdrant_client.qdrant_fastembed import TextEmbedding
 
-# chunk dei testi.
+
+# -----------------------------------------------------------
+# Text chunking setup
+# Splits large text inputs into smaller overlapping segments
+# for better vectorization and semantic search accuracy.
+# -----------------------------------------------------------
 splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
 
-# carica le variabili d'ambiente
+
+# -----------------------------------------------------------
+# Environment variable loading
+# This loads configuration values (e.g., API keys, modes, etc.)
+# from a .env file using python-dotenv.
+# -----------------------------------------------------------
 load_dotenv()
 
-# embedder e variabili d'ambiente
-embedder = TextEmbedding(model_name=os.getenv("EMBEDDER", "jinaai/jina-embeddings-v2-base-en"))
+
+# -----------------------------------------------------------
+# Embedding and Qdrant configuration
+# Retrieves the embedding model, collection name, and vector field
+# from environment variables (with safe defaults).
+# -----------------------------------------------------------
+embedder = TextEmbedding(
+    model_name=os.getenv("EMBEDDER", "jinaai/jina-embeddings-v2-base-en")
+)
 collection_name = os.getenv("COLLECTION", "crew_knowledge")
 VECTOR_NAME = os.getenv("VECTOR", "fast-jina-embeddings-v2-base-en")
 
-# modalità di utilizzo
+
+# -----------------------------------------------------------
+# Qdrant mode selection
+# Determines where the vector database will run:
+# - "memory" → in-memory (RAM)
+# - "cloud" → remote hosted Qdrant instance
+# - "docker" → local containerized Qdrant service
+# -----------------------------------------------------------
 mode = os.getenv("QDRANT_MODE", "memory")
 print(f"Qdrant running in {mode} mode.")
 
 if mode == "memory":
     client = QdrantClient(":memory:")
 elif mode == "cloud":
-    client = QdrantClient(host=os.getenv("QDRANT_HOST"), api_key=os.getenv("QDRANT_API_KEY"))
+    client = QdrantClient(
+        host=os.getenv("QDRANT_HOST"),
+        api_key=os.getenv("QDRANT_API_KEY"),
+    )
 elif mode == "docker":
     client = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
 else:
     raise ValueError("Qdrant has 3 modes: memory, cloud or docker")
 
-# --- NEW: create collection if missing (minimal) ---
-VECTOR_SIZE = getattr(embedder, "embedding_size", 768)  # uses embedder size if available
+
+# -----------------------------------------------------------
+# Create collection if it doesn't exist
+# Checks whether the specified collection already exists,
+# and creates it if missing. The vector size is inferred
+# from the embedder.
+# -----------------------------------------------------------
+VECTOR_SIZE = getattr(embedder, "embedding_size", 768)
 DISTANCE = Distance.COSINE
 existing = {c.name for c in client.get_collections().collections}
+
 if collection_name not in existing:
     client.create_collection(
         collection_name=collection_name,
         vectors_config={VECTOR_NAME: VectorParams(size=VECTOR_SIZE, distance=DISTANCE)},
     )
-# ---------------------------------------------------
 
+
+# -----------------------------------------------------------
+# Deterministic ID generator
+# Produces a stable UUID based on normalized text content.
+# Ensures that identical text always maps to the same ID.
+# -----------------------------------------------------------
 def stable_id(text: str) -> str:
     norm = " ".join(text.split()).strip().lower()
     return uuid.uuid5(uuid.NAMESPACE_URL, norm).hex
+
+
+# -----------------------------------------------------------
+# Tool: Write to knowledge base
+# Inserts (or updates) information in the Qdrant collection.
+# Automatically skips text chunks that already exist to
+# prevent duplicates.
+# -----------------------------------------------------------
 @tool("Write to knowledge base")
 def upsert_knowledge(text: str, url: str) -> str:
     """
@@ -58,27 +105,31 @@ def upsert_knowledge(text: str, url: str) -> str:
     Example call: upsert_knowledge(text="Mario's favorite color is blue.", url="http:/website.com")
     """
     import hashlib, uuid
+
+    # Split the input text into semantic chunks
     chunks = splitter.split_text(text)
+
     for chunk in chunks:
-        # crea un ID deterministico basato sull’hash del testo
-        content_hash = hashlib.sha256(chunk.encode('utf-8')).hexdigest()
+        # Create a deterministic ID from the text content
+        content_hash = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
         deterministic_id = str(uuid.UUID(content_hash[:32]))
 
-        # controllo se il punto esiste già
+        # Check if this chunk already exists in the collection
         try:
             existing = client.retrieve(
-                collection_name=collection_name,
-                ids=[deterministic_id]
+                collection_name=collection_name, ids=[deterministic_id]
             )
-            # Se esiste già, salta questo chunk
+
+            # If an entry with this ID already exists, skip it
             if existing and existing[0].payload:
-                print(f"Punto già esistente per {url}, skip...")
+                print(f"Point already exists for {url}, skipping...")
                 continue
+
         except Exception:
-            # Nessun punto trovato: procedo con l’inserimento
+            # If the ID is not found, proceed with insertion
             pass
 
-        # calcolo embedding e salvo
+        # Generate an embedding and store the new data point
         text_embedding = next(iter(embedder.embed(chunk)))
         client.upsert(
             collection_name=collection_name,
@@ -86,16 +137,19 @@ def upsert_knowledge(text: str, url: str) -> str:
                 PointStruct(
                     id=deterministic_id,
                     vector={VECTOR_NAME: text_embedding},
-                    payload={
-                        'document': chunk,
-                        'source_url': url
-                    }
+                    payload={"document": chunk, "source_url": url},
                 )
             ],
         )
+
     return f"Saved data from {url}"
 
 
+# -----------------------------------------------------------
+# Tool: Search knowledge base
+# Performs a semantic vector search to retrieve the most
+# relevant stored text segments related to a user query.
+# -----------------------------------------------------------
 @tool("Search knowledge base")
 def search_knowledge(query: str) -> str:
     """
@@ -107,17 +161,25 @@ def search_knowledge(query: str) -> str:
 
     Example call: search_knowledge(query="What is Mario's favorite color?")
     """
+    # Generate embedding for the input query
     query_embedding = next(iter(embedder.embed(query)))
 
+    # Query Qdrant for semantically similar vectors
     search_results = client.query_points(
         collection_name=collection_name,
         query=query_embedding,
-        using=VECTOR_NAME,  # same VECTOR as in upsert
-        limit=10
+        using=VECTOR_NAME,
+        limit=10,
     ).points
-    res = []
+
+    # Collect retrieved chunks and their sources
+    results = []
     for result in search_results:
-        res.append(f"{result.payload['document']}\n{result.payload['source_url']}\n")
-    if not res:
+        results.append(
+            f"{result.payload['document']}\n{result.payload['source_url']}\n"
+        )
+
+    # Return formatted response or fallback message
+    if not results:
         return "(no results)"
-    return "\n".join(res)
+    return "\n".join(results)

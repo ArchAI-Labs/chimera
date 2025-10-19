@@ -23,34 +23,6 @@ generalist_expert:
     providing a solid foundation for valuable posts.
 
 
-# knowledge_manager:
-#   role: > 
-#     knowledge_manager
-#   goal: > 
-#     Index the scraped Markdown into Qdrant and answer questions via semantic retrieval.
-#   backstory: >
-#       You have to save the knowledge from qdrant memory.
-
-  
-
-# product_expert:
-#   role: >
-#     Product Expert
-#   goal: >
-#     Provide authoritative, verified, and accurate information about {topic} 
-#     related to the company's products and services.
-#     Always rely on the internal RAG knowledge base (Qdrant) as your primary source of truth.
-#     If needed, scrape official websites to expand or refresh your context before answering.
-
-#   backstory: >
-#     You are the company's product expert.  
-#     You have direct access to official documentation through the website scraping tool and the internal Qdrant-based knowledge base.  
-#     Your role is to find, understand, and clearly explain technical information about the company's products.  
-#     You never invent or assume anything, every answer must be fully grounded in the retrieved data.
-#   instructions: >
-#       - Always use the "qdrant_rag_tool" to search the internal company knowledge base (Qdrant).  
-#       - Use the "scraper_tool" only if no relevant data is found in the Qdrant results.  
-#       - Never rely on external or built-in knowledge; all answers must come from retrieved data.
 
 
 product_expert:
