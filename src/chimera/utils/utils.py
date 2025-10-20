@@ -1,9 +1,7 @@
 import os
 from typing import Any, Dict, List, Optional, Union
 import time
-
 import tiktoken
-
 from crewai import LLM
 from crewai.tasks.task_output import TaskOutput
 import panel as pn
@@ -19,6 +17,7 @@ def check_memory_dir(memory_dir: str = "./memory"):
         os.makedirs(memory_dir)
     else:
         print("memory exists")
+
 
 def manage_output_dir(output_dir: str):
     """
@@ -40,20 +39,23 @@ def manage_output_dir(output_dir: str):
     except Exception as e:
         raise ValueError(f"Error creating output directory: {e}")
 
-def LLM_Config(provider:str, 
-               model:str, 
-               temperature:Optional[float] = None,
-               max_tokens:Optional[int] = None, 
-               timeout:Optional[Union[float, int]] = None, 
-               base_url:Optional[str]=None, 
-               callbacks:List[Any] = []):
+
+def LLM_Config(
+    provider: str,
+    model: str,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    timeout: Optional[Union[float, int]] = None,
+    base_url: Optional[str] = None,
+    callbacks: List[Any] = [],
+):
     ## Manage LLMs
     if provider in ["openai", "google", "anthropic", "groq"]:
         llm = LLM(
             model=model,
             temperature=float(temperature),  # Adjust based on task
             max_tokens=int(max_tokens),  # Set based on output needs
-            timeout=int(timeout),   # Longer timeout for complex tasks
+            timeout=int(timeout),  # Longer timeout for complex tasks
             callbacks=callbacks,
         )
     elif provider == "ollama":
