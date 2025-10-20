@@ -56,7 +56,7 @@ class LinkedInCrew:
 
     manager_llm = LLM_Config(
         provider=os.getenv("PROVIDER"),
-        model=os.getenv("MANGER_MODEL"),
+        model=os.getenv("MANAGER_MODEL"),
         base_url=os.getenv("BASE_URL"),
         temperature=float(os.getenv("TEMPERATURE")),
         max_tokens=int(os.getenv("MAX_TOKENS")),
