@@ -116,10 +116,8 @@ Within the broader landscape of AI content generation platforms, this repository
 Clone the project repository with:
 
 ```
-git clone <repository_url>
+git clone https://github.com/ArchAI-Labs/chimera.git
 ```
-
-Replace `<repository_url>` with the actual source URL.
 
 ### Module Usage Overview
 
