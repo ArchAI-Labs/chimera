@@ -277,8 +277,6 @@ Based on SonarQube and software analyst reports, the code quality metrics are as
 
 - [ ] **Validate User Inputs and Environment Variables**: Implement input validation routines to prevent invalid runtime parameters and catch potential misconfigurations early.
 
-- [ ] **Fix Environment Variable Typo**: Correct the likely typo `MANGER_MODEL` to `MANAGER_MODEL` to avoid runtime misconfigurations.
-
 - [ ] **Introduce Asynchronous Processing**: Evaluate and implement async or parallel task execution to enhance throughput and responsiveness.
 
 - [ ] **Increase Test Coverage**: Develop unit and integration tests targeting agents, tasks, and tools, particularly for knowledge base interactions and pipeline orchestration.
