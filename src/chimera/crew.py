@@ -26,8 +26,6 @@ load_dotenv()
 @CrewBase
 class LinkedInCrew:
     """
-    Crew definition for the LinkedIn content generation workflow.
-
     This class defines all agents, tasks, and tools required to
     build a fully automated LinkedIn content creation pipeline
     using CrewAI and LangChain integrations.
@@ -45,7 +43,6 @@ class LinkedInCrew:
 
     # -----------------------------------------------------------
     # LLM configurations
-    # Initializes main and manager-level language models.
     # -----------------------------------------------------------
     llm = LLM_Config(
         provider=os.getenv("PROVIDER"),
