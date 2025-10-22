@@ -91,9 +91,57 @@ Within the broader landscape of AI content generation platforms, this repository
 
 ### Prerequisites and Setup
 
-- **Python Version**: Ensure Python 3.8 or later is installed.
-
 - **Dependency Installation**: Use `pip` or a virtual environment manager to install required dependencies, including CrewAI, LangChain, Qdrant client, Panel, and others as specified in `requirements.txt` (assumed present).
+
+-   Use **Python >= 3.10 and < 3.14**. This matches CrewAI and its tools’ supported range.
+-   Have **uv** installed so you can use the CrewAI CLI as a tool. See uv’s install guide (Windows/macOS/Linux installers).
+    
+
+  - **1) Go to the project folder**
+
+```bash
+cd chimera
+```
+
+  - **2) Create a virtual environment**
+
+```bash
+python -m venv .venv
+```
+
+  - **3) Activate the environment**
+
+-   Windows:
+    
+
+```bash
+.\.venv\Scripts\activate
+```
+
+-   macOS/Linux:
+    
+
+```bash
+source .venv/bin/activate
+```
+
+  - **4) Install project dependencies**
+
+```bash
+pip install -r requirements.txt
+```
+
+  - **5) Install the CrewAI CLI with uv** (assumes uv is already installed)
+
+```bash
+uv tool install crewai
+```
+
+  - **6) Run the crew**
+
+```bash
+crewai run
+```
 
 - **Environment Variables**: 
   - Create a `.env` file at the project root.
