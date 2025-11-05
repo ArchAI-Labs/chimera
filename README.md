@@ -1,15 +1,15 @@
 # Chimera
 
----
-
-## Work in Progress
-
----
-
 <br>
 
 ![logo](https://github.com/ArchAI-Labs/chimera/blob/main/img/chimera.png)
 
 <br>
 
-# start 15-09-2025
+---
+
+## WORK IN PROGRESS - MIGRAZIONE CREWAI -> LLAMAINDEX
+
+# TO DO:
+- Migliorare user input, da fisso a agente
+- aggiungere generazione immagini open-source

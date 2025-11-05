@@ -211,3 +211,4 @@ memory/
 output/
 uv.lock
 qdrant_data/
+db/
