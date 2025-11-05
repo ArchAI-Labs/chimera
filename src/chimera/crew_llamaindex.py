@@ -3,16 +3,14 @@ import os
 import sys
 import warnings
 
-# Set environment variables BEFORE any imports
 os.environ['PYDANTIC_SKIP_VALIDATING_CORE_SCHEMAS'] = '1'
-os.environ['PYTHONWARNINGS'] = 'ignore::DeprecationWarning'
+os.environ['PYTHONWARNINGS'] = 'ignore::DeprecationWarning,ignore::ResourceWarning'
 
-# Aggressive warning suppression
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=ResourceWarning)
 
-# Suppress Pydantic-specific warnings
 try:
     from pydantic import warnings as pydantic_warnings
     pydantic_warnings.PydanticDeprecatedSince20 = type('PydanticDeprecatedSince20', (UserWarning,), {})
@@ -27,23 +25,20 @@ try:
 except ImportError:
     pass
 
-# Additional filters
 warnings.filterwarnings("ignore", message=".*Pydantic.*")
 warnings.filterwarnings("ignore", message=".*__fields__.*")
 warnings.filterwarnings("ignore", message=".*__fields_set__.*")
 warnings.filterwarnings("ignore", message=".*model_computed_fields.*")
 warnings.filterwarnings("ignore", message=".*model_fields.*")
-warnings.filterwarnings(
-    "ignore",
-    message=r".*`duckduckgo_search`\) has been renamed to `ddgs`.*",
-    category=RuntimeWarning,
-)
+warnings.filterwarnings("ignore", message=".*unclosed.*")
+warnings.filterwarnings("ignore", message=".*socket.*")
+warnings.filterwarnings("ignore", message=".*transport.*")
+warnings.filterwarnings("ignore", message=r".*`duckduckgo_search`\) has been renamed to `ddgs`.*", category=RuntimeWarning)
 
-# Monkey-patch warnings to be even more aggressive
 _original_warn = warnings.warn
 def _silent_warn(message, category=UserWarning, stacklevel=1):
     msg_str = str(message).lower()
-    if any(x in msg_str for x in ['pydantic', '__fields__', 'deprecated', 'model_fields']):
+    if any(x in msg_str for x in ['pydantic', '__fields__', 'deprecated', 'model_fields', 'unclosed', 'socket', 'transport']):
         return
     _original_warn(message, category, stacklevel)
 
@@ -51,15 +46,13 @@ warnings.warn = _silent_warn
 
 ####################
 
-
 from typing import Dict, Any, Optional
 import yaml
 import requests
 from dotenv import load_dotenv
+import asyncio
 
-# --- LlamaIndex imports (with fallbacks for version differences) ---
 try:
-    # Newer LlamaIndex (0.10+)
     from llama_index.core.agent.workflow import ReActAgent
 except ImportError:
     from llama_index.core.agent import ReActAgent
@@ -76,9 +69,6 @@ from llama_index.core.workflow import (
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.core.llms import ChatMessage
 
-# -----------------------------------------------------------
-# Local imports + fallbacks
-# -----------------------------------------------------------
 try:
     from utils.utils import print_output, check_memory_dir, LLM_Config
     from utils.storage_config import (
@@ -91,13 +81,10 @@ try:
     from tools.qdrant_tool import search_knowledge, upsert_knowledge
     from utils.storage_qdrant import QdrantStorage
 except ImportError:
-    # Fallbacks when utils module doesn't exist
     def print_output(*args, **kwargs):
-        """Fallback print output"""
         print(*args, **kwargs)
 
     def check_memory_dir():
-        """Ensure memory directory exists"""
         os.makedirs("memory", exist_ok=True)
 
     def LLM_Config(provider, model, base_url=None, temperature=0.7,
@@ -123,7 +110,6 @@ except ImportError:
         elif provider == "ollama":
             from llama_index.llms.ollama import Ollama
             safe_model = model or "llama3.1:8b"
-            # Use a reasonable context size (4096 or 8192)
             num_ctx = int(os.getenv("NUM_CTX", "4096"))
             return Ollama(
                 model=safe_model,
@@ -148,7 +134,6 @@ except ImportError:
     from tools.dalle_tool import download_image_tool, DallETool
     from tools.qdrant_tool import search_knowledge, upsert_knowledge
 
-    # Mock storage config functions
     def get_long_term_memory():
         return None
 
@@ -161,65 +146,40 @@ except ImportError:
     class QdrantStorage:
         pass
 
-# -----------------------------------------------------------
-# Environment loading
-# -----------------------------------------------------------
 load_dotenv()
 
-
-# -----------------------------------------------------------
-# Custom Events for Workflow
-# -----------------------------------------------------------
 class EditorialPlanEvent(Event):
-    """Event containing editorial plan results"""
     result: str
-
 
 class ContentGenerationEvent(Event):
-    """Event containing generated content"""
     result: str
     content_type: str
-    editorial_plan: str  # Pass editorial_plan forward
-
+    editorial_plan: str
 
 class PostWritingEvent(Event):
-    """Event containing written post"""
     result: str
     editorial_plan: str
     generated_content: str
 
-
 class VisualsEvent(Event):
-    """Event containing visual assets info"""
     result: str
     editorial_plan: str
     generated_content: str
     linkedin_posts: str
 
-
 class PlanningCompleteEvent(Event):
-    """Event indicating planning is complete"""
     result: str
 
-
 class LinkedInCrew:
-    """
-    Fully automated LinkedIn content creation pipeline using
-    LlamaIndex agents and workflows.
-    """
-
     def __init__(self, inputs: Optional[Dict[str, Any]] = None):
         self.inputs = inputs if inputs is not None else {}
         print(f"USER INPUTS RECEIVED: {self.inputs}")
 
-        # Ensure memory directories exist
         check_memory_dir()
 
-        # Load configurations
         self.agents_config = self._load_yaml_config("config/agents.yaml")
         self.tasks_config = self._load_yaml_config("config/tasks.yaml")
 
-        # Normalize env (manager model falls back to main MODEL if not set)
         provider = os.getenv("PROVIDER") or "openai"
         model = os.getenv("MODEL")
         manager_model = os.getenv("MANAGER_MODEL") or model
@@ -228,7 +188,6 @@ class LinkedInCrew:
         max_tokens = int(os.getenv("MAX_TOKENS", "2000"))
         timeout = float(os.getenv("TIMEOUT", "60"))
 
-        # Initialize LLM configurations (will sanitize Ollama names if needed)
         self.llm = self._create_llm(
             provider=provider,
             model=model,
@@ -247,12 +206,10 @@ class LinkedInCrew:
             timeout=timeout,
         )
 
-        # Initialize tools & agents
         self._initialize_tools()
-        self._test_tools()  # Test tools before using them
+        self._test_tools()
         self._initialize_agents()
 
-        # Create workflow
         workflow_inputs = {
             **self.inputs,
             "agents_config": self.agents_config,
@@ -260,10 +217,10 @@ class LinkedInCrew:
         }
         self.workflow = LinkedInWorkflow(
             agents=self.agents,
-            llm=self.llm,  # Pass direct LLM access
+            llm=self.llm,
             manager_llm=self.manager_llm,
             inputs=workflow_inputs,
-            tools_working=self.tools_working,  # Pass tool status
+            tools_working=self.tools_working,
             timeout=None,
             verbose=True,
         )
@@ -276,15 +233,8 @@ class LinkedInCrew:
             print(f"Warning: Config file {config_path} not found. Using defaults.")
             return {}
 
-    def _create_llm(
-        self,
-        provider: str,
-        model: Optional[str],
-        base_url: Optional[str] = None,
-        temperature: float = 0.7,
-        max_tokens: int = 2000,
-        timeout: float = 60.0,
-    ):
+    def _create_llm(self, provider: str, model: Optional[str], base_url: Optional[str] = None,
+                    temperature: float = 0.7, max_tokens: int = 2000, timeout: float = 60.0):
         return LLM_Config(
             provider=provider,
             model=model,
@@ -296,16 +246,14 @@ class LinkedInCrew:
         )
 
     def _test_tools(self):
-        """Test if tools are working properly"""
         self.tools_working = {
             "web_search": False,
-            "file_writer": True,  # File writer should always work
+            "file_writer": True,
             "knowledge_base": False,
         }
         
         print("\n🔧 Testing tools...")
         
-        # Test web search
         try:
             custom_search = MyCustomDuckDuckGoTool()
             result = custom_search.run("test query")
@@ -317,7 +265,6 @@ class LinkedInCrew:
         except Exception as e:
             print(f"⚠️ Web search tool: NOT WORKING ({str(e)[:50]})")
         
-        # Test knowledge base
         try:
             result = search_knowledge("test")
             self.tools_working["knowledge_base"] = True
@@ -328,8 +275,6 @@ class LinkedInCrew:
         print("")
 
     def _initialize_tools(self):
-        """Initialize all tools for agents"""
-        # Web search tool
         if os.environ.get("SERPER_API_KEY"):
             try:
                 from crewai_tools import SerperDevTool
@@ -340,7 +285,6 @@ class LinkedInCrew:
                     description="Search the web for information on a given topic",
                 )
             except ImportError:
-                # Fallback to DuckDuckGo if SerperDevTool not available
                 custom_search = MyCustomDuckDuckGoTool()
                 self.web_search_tool = FunctionTool.from_defaults(
                     fn=lambda query: custom_search.run(query),
@@ -355,7 +299,6 @@ class LinkedInCrew:
                 description="Search the web for information on a given topic",
             )
 
-        # File writer tool
         def write_file(filename: str, content: str) -> str:
             try:
                 with open(filename, "w", encoding="utf-8") as f:
@@ -370,7 +313,6 @@ class LinkedInCrew:
             fn=write_file, name="file_writer", description="Write content to a file"
         )
 
-        # DALL-E image generation tool (graceful no-op if no OPENAI_API_KEY)
         dalle = DallETool(model="dall-e-3", size="1024x1024", quality="standard", n=1)
         self.dalle_tool = FunctionTool.from_defaults(
             fn=lambda prompt: dalle.run(prompt),
@@ -378,14 +320,12 @@ class LinkedInCrew:
             description="Generate an image using DALL-E based on a text prompt",
         )
 
-        # Image download tool
         self.download_image_tool = FunctionTool.from_defaults(
             fn=download_image_tool,
             name="download_image",
             description="Download an image from a URL",
         )
 
-        # Web scraper tool
         try:
             from crewai_tools import ScrapeWebsiteTool
             scraper = ScrapeWebsiteTool()
@@ -412,7 +352,6 @@ class LinkedInCrew:
                 description="Scrape content from a website URL",
             )
 
-        # Knowledge base tools (RAG)
         self.search_knowledge_tool = FunctionTool.from_defaults(
             fn=search_knowledge,
             name="search_knowledge",
@@ -425,11 +364,8 @@ class LinkedInCrew:
         )
 
     def _initialize_agents(self):
-        """Initialize all agents with their respective tools and configurations"""
         self.agents = {}
 
-        # Only initialize agents that NEED tools
-        # Generalist Expert Agent (needs web search)
         self.agents["generalist_expert"] = ReActAgent(
             tools=[self.web_search_tool],
             llm=self.llm,
@@ -438,7 +374,6 @@ class LinkedInCrew:
             verbose=True,
         )
 
-        # Product Expert Agent (uses RAG + Scraper)
         print("Activated agent: Product Expert (uses RAG + Scraper)")
         self.agents["product_expert"] = ReActAgent(
             tools=[
@@ -452,7 +387,6 @@ class LinkedInCrew:
             verbose=True,
         )
 
-        # Designer Agent (needs DALL-E)
         self.agents["designer"] = ReActAgent(
             tools=[self.dalle_tool, self.download_image_tool],
             llm=self.llm,
@@ -461,7 +395,6 @@ class LinkedInCrew:
             verbose=True,
         )
 
-        # Planner Agent (needs file writer)
         self.agents["planner"] = ReActAgent(
             tools=[self.file_writer_tool],
             llm=self.llm,
@@ -470,42 +403,45 @@ class LinkedInCrew:
             verbose=True,
         )
 
+    def cleanup(self):
+        try:
+            if hasattr(self.llm, 'close'):
+                self.llm.close()
+            if hasattr(self.manager_llm, 'close'):
+                self.manager_llm.close()
+        except:
+            pass
+
     async def kickoff(self) -> Dict[str, Any]:
         print("Starting LinkedIn Content Creation Workflow...")
-        result = await self.workflow.run()
-        return result
+        try:
+            result = await self.workflow.run()
+            return result
+        finally:
+            self.cleanup()
+            await asyncio.sleep(0.1)
 
     def run(self) -> Dict[str, Any]:
         import asyncio
-        return asyncio.run(self.kickoff())
+        try:
+            return asyncio.run(self.kickoff())
+        finally:
+            self.cleanup()
 
 
 class LinkedInWorkflow(Workflow):
-    """Workflow that orchestrates the LinkedIn content creation pipeline"""
-
-    def __init__(
-        self, 
-        agents: Dict[str, ReActAgent], 
-        llm,
-        manager_llm,
-        inputs: Dict[str, Any],
-        tools_working: Dict[str, bool],
-        **kwargs
-    ):
+    def __init__(self, agents: Dict[str, ReActAgent], llm, manager_llm,
+                 inputs: Dict[str, Any], tools_working: Dict[str, bool], **kwargs):
         super().__init__(**kwargs)
         self.agents = agents
-        self.llm = llm  # Direct LLM access for simple tasks
+        self.llm = llm
         self.manager_llm = manager_llm
         self.inputs = inputs
         self.tools_working = tools_working
         self.expert_type = inputs.get("expert_type", "generalista")
-        
-        # Use workflow instance to store data (version-agnostic)
         self.workflow_data = {}
 
-    # ---------- Direct LLM call (no agent loop) ----------
     async def _call_llm(self, llm, prompt: str) -> str:
-        """Call LLM directly without ReAct agent loop - for simple tasks"""
         print(f"\n🤖 Calling LLM directly...")
         print(f"📝 Prompt preview: {prompt[:150]}...")
         
@@ -517,34 +453,39 @@ class LinkedInWorkflow(Workflow):
         print(f"📄 Preview: {result[:200]}...")
         return result
 
-    # ---------- ReAct agent call (with tool use) ----------
-    async def _ask_agent(self, agent: ReActAgent, prompt: str, max_iterations: int = 15):
-        """
-        Call a ReActAgent for tasks that need tools.
-        """
+    async def _ask_agent_with_fallback(self, agent: ReActAgent, prompt: str, 
+                                      max_iterations: int = 15, fallback_llm = None) -> str:
         print(f"\n🔧 Calling ReActAgent (max_iterations={max_iterations})...")
         print(f"📝 Prompt preview: {prompt[:150]}...")
         
         try:
-            # Try the new API with max_iterations parameter
             if hasattr(agent, "run"):
                 handler = agent.run(prompt, max_iterations=max_iterations)
                 result = await handler
                 print(f"✅ Agent completed")
                 print(f"📄 Result preview: {str(result)[:200]}...")
-                return result
+                return str(result)
             if hasattr(agent, "aquery"):
                 result = await agent.aquery(prompt)
                 print(f"✅ Agent completed")
-                return result
+                return str(result)
             if hasattr(agent, "achat"):
                 result = await agent.achat(prompt)
                 print(f"✅ Agent completed")
-                return result
+                return str(result)
             raise AttributeError("Agent has no usable run/aquery/achat methods")
         except Exception as e:
-            print(f"❌ Agent error: {str(e)[:100]}")
-            raise
+            error_msg = str(e)
+            if "Max iterations" in error_msg or "WorkflowRuntimeError" in error_msg:
+                print(f"⚠️ Agent hit max iterations - falling back to direct LLM...")
+                if fallback_llm:
+                    return await self._call_llm(fallback_llm, prompt)
+                else:
+                    print(f"❌ No fallback LLM provided")
+                    raise
+            else:
+                print(f"❌ Agent error: {error_msg[:100]}")
+                raise
 
     @step
     async def editorial_plan(self, ctx: Context, ev: StartEvent) -> EditorialPlanEvent:
@@ -567,18 +508,14 @@ Include:
 
 Provide a detailed, structured editorial plan."""
 
-        # Use direct LLM call - no tools needed for planning
         result = await self._call_llm(self.manager_llm, prompt)
 
-        # Store in workflow instance
         self.workflow_data["editorial_plan"] = result
         print(f"\n✅ Editorial plan created: {len(result)} characters")
         return EditorialPlanEvent(result=result)
 
     @step
-    async def content_generation(
-        self, ctx: Context, ev: EditorialPlanEvent
-    ) -> ContentGenerationEvent:
+    async def content_generation(self, ctx: Context, ev: EditorialPlanEvent) -> ContentGenerationEvent:
         print("\n" + "="*60)
         print("=== STEP 2: Content Generation ===")
         print("="*60)
@@ -586,16 +523,31 @@ Provide a detailed, structured editorial plan."""
         editorial_plan = ev.result
         topic = self.inputs.get("topic", "AI and Technology")
 
-        # Check if we should try using tools or just use LLM
-        if self.expert_type == "generalista" and self.tools_working.get("web_search"):
-            print("⚠️ Web search not working - using direct LLM instead...")
-            
-        if self.expert_type == "prodotto" and self.tools_working.get("knowledge_base"):
-            print("⚠️ Knowledge base not working - using direct LLM instead...")
-        
-        # ALWAYS use direct LLM for now since tools are having issues
-        print("Using direct LLM for content generation...")
-        prompt = f"""You are an expert content creator. Based on this editorial plan, generate detailed, engaging content about {topic}.
+        if self.expert_type == "generalista":
+            if self.tools_working.get("web_search"):
+                print("✅ Using Generalist Expert with web search...")
+                prompt = f"""Based on this editorial plan, generate detailed technical content about {topic}.
+
+Editorial Plan:
+{editorial_plan}
+
+Your task:
+1. Use the web_search tool to find current information about {topic}
+2. Generate comprehensive technical content covering:
+   - Industry trends and insights
+   - Technical explanations
+   - Best practices
+   - Real-world applications
+
+Search for recent information and incorporate it into your response.
+Format the output as structured, detailed content ready to be transformed into LinkedIn posts."""
+                
+                agent = self.agents["generalist_expert"]
+                result = await self._ask_agent_with_fallback(agent, prompt, max_iterations=15, fallback_llm=self.llm)
+                content_type = "technical_with_search"
+            else:
+                print("⚠️ Web search not working - using direct LLM instead...")
+                prompt = f"""You are an expert content creator. Based on this editorial plan, generate detailed, engaging content about {topic}.
 
 Editorial Plan:
 {editorial_plan}
@@ -610,12 +562,71 @@ Generate comprehensive content covering:
 Format the output as structured, detailed content ready to be transformed into LinkedIn posts.
 Make it substantive and valuable - at least 500 words of quality content."""
 
-        result = await self._call_llm(self.llm, prompt)
-        content_type = "direct_llm"
+                result = await self._call_llm(self.llm, prompt)
+                content_type = "technical_direct"
 
-        # Store in workflow instance
+        elif self.expert_type == "prodotto":
+            if self.tools_working.get("knowledge_base"):
+                print("✅ Using Product Expert with knowledge base...")
+                prompt = f"""Based on this editorial plan, generate product-focused content about {topic}.
+
+Editorial Plan:
+{editorial_plan}
+
+Your task:
+1. Use the search_knowledge tool to find relevant product information
+2. Generate product-focused content covering:
+   - Product features and benefits
+   - Use cases and success stories
+   - Competitive advantages
+   - Customer pain points and solutions
+
+Format the output as structured content ready for LinkedIn posts."""
+                
+                agent = self.agents["product_expert"]
+                result = await self._ask_agent_with_fallback(agent, prompt, max_iterations=20, fallback_llm=self.llm)
+                content_type = "product_with_kb"
+            else:
+                print("⚠️ Knowledge base not working - using direct LLM instead...")
+                prompt = f"""You are an expert content creator. Based on this editorial plan, generate detailed product-focused content about {topic}.
+
+Editorial Plan:
+{editorial_plan}
+
+Generate comprehensive content covering:
+- Product features and benefits
+- Use cases and success stories
+- Competitive advantages
+- Customer pain points and solutions
+- Examples and case studies
+
+Format the output as structured, detailed content ready to be transformed into LinkedIn posts.
+Make it substantive and valuable - at least 500 words of quality content."""
+
+                result = await self._call_llm(self.llm, prompt)
+                content_type = "product_direct"
+        else:
+            print("Using direct LLM (no expert type specified)...")
+            prompt = f"""You are an expert content creator. Based on this editorial plan, generate detailed, engaging content about {topic}.
+
+Editorial Plan:
+{editorial_plan}
+
+Generate comprehensive content covering:
+- Industry trends and insights
+- Technical explanations
+- Best practices
+- Real-world applications
+- Examples and case studies
+
+Format the output as structured, detailed content ready to be transformed into LinkedIn posts.
+Make it substantive and valuable - at least 500 words of quality content."""
+
+            result = await self._call_llm(self.llm, prompt)
+            content_type = "general"
+
         self.workflow_data["generated_content"] = result
-        print(f"\n✅ Content generated: {len(result)} characters")
+        print(f"\n✅ Content generated ({content_type}): {len(result)} characters")
         
         return ContentGenerationEvent(
             result=result, 
@@ -624,9 +635,7 @@ Make it substantive and valuable - at least 500 words of quality content."""
         )
 
     @step
-    async def write_linkedin_post(
-        self, ctx: Context, ev: ContentGenerationEvent
-    ) -> PostWritingEvent:
+    async def write_linkedin_post(self, ctx: Context, ev: ContentGenerationEvent) -> PostWritingEvent:
         print("\n" + "="*60)
         print("=== STEP 3: Writing LinkedIn Post ===")
         print("="*60)
@@ -663,10 +672,8 @@ Format as:
 
 And so on..."""
 
-        # Use direct LLM - no tools needed for copywriting
         result = await self._call_llm(self.llm, prompt)
 
-        # Store in workflow instance
         self.workflow_data["linkedin_posts"] = result
         print(f"\n✅ LinkedIn posts written: {len(result)} characters")
         
@@ -684,7 +691,6 @@ And so on..."""
 
         posts = ev.result
 
-        # For now, just generate concepts without DALL-E since it may not be available
         prompt = f"""You are a visual designer. Based on these LinkedIn posts, create detailed visual design concepts.
 
 LinkedIn Posts:
@@ -708,10 +714,8 @@ Elements: [key elements]
 === VISUAL 2 ===
 [and so on...]"""
 
-        # Use direct LLM instead of agent since DALL-E might not be available
         result = await self._call_llm(self.llm, prompt)
 
-        # Store in workflow instance
         self.workflow_data["visuals"] = result
         print(f"\n✅ Visual concepts created: {len(result)} characters")
         
@@ -728,13 +732,11 @@ Elements: [key elements]
         print("=== STEP 5: Planning and Saving ===")
         print("="*60)
 
-        # Retrieve from event
         editorial_plan = ev.editorial_plan
         content = ev.generated_content
         posts = ev.linkedin_posts
         visuals = ev.result
 
-        # Create the final content plan
         final_plan = f"""# LinkedIn Content Calendar
 
 ## Editorial Plan
@@ -774,7 +776,6 @@ Elements: [key elements]
 - Target profile views: 50+ per week
 """
 
-        # Write directly to file
         try:
             with open("linkedin_content_plan.md", "w", encoding="utf-8") as f:
                 f.write(final_plan)
