@@ -70,8 +70,8 @@ from llama_index.core.workflow import (
 )
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.core.llms import ChatMessage
+from llama_index.core.agent.workflow import AgentStream
 
-# Import utilities with fallbacks
 try:
     from utils.utils import print_output, check_memory_dir, LLM_Config
     from utils.storage_config import (
@@ -180,7 +180,6 @@ except ImportError:
 load_dotenv()
 
 
-# Utility Functions
 def ensure_utf8_path(p: Path) -> Path:
     """Ensure parent directories exist for a given path."""
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -195,27 +194,20 @@ def save_text_utf8(path: Path, text: str) -> Path:
     """
     path = ensure_utf8_path(path)
     
-    # Convert Path to string to avoid any path encoding issues on Windows
     path_str = str(path)
     
     try:
-        # Force UTF-8 encoding with explicit error handling
-        # Using 'wb' mode and manual encoding to bypass Windows default encoding
         with open(path_str, 'wb') as f:
-            # Encode to UTF-8 bytes, replacing any problematic characters
             utf8_bytes = text.encode('utf-8', errors='replace')
             f.write(utf8_bytes)
     except Exception as e:
         print(f"⚠️  Warning saving to {path_str}: {e}")
-        # Last resort: sanitize and try again
         try:
-            # Remove or replace problematic characters
             sanitized = text.encode("utf-8", errors="ignore").decode("utf-8")
             with open(path_str, 'wb') as f:
                 f.write(sanitized.encode('utf-8'))
         except Exception as e2:
             print(f"❌ Error saving file {path_str}: {e2}")
-            # Final fallback: ASCII only
             try:
                 ascii_safe = text.encode("ascii", errors="ignore").decode("ascii")
                 with open(path_str, 'w', encoding='utf-8') as f:
@@ -233,7 +225,7 @@ def resolve_path(base_dir: Path, maybe_rel: str) -> Path:
     return p if p.is_absolute() else (base_dir / p)
 
 
-# Workflow Events
+
 class EditorialPlanEvent(Event):
     result: str
 
@@ -268,7 +260,6 @@ class LinkedInCrew:
         self.inputs = inputs if inputs is not None else {}
         print(f"USER INPUTS RECEIVED: {self.inputs}")
 
-        # Setup output directory - only create if it doesn't exist
         requested_out = self.inputs.get("output_dir")
         if requested_out:
             self.output_dir = Path(requested_out)
@@ -276,7 +267,6 @@ class LinkedInCrew:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.output_dir = Path("output") / f"run_{ts}"
         
-        # Only create if it doesn't exist
         if not self.output_dir.exists():
             self.output_dir.mkdir(parents=True, exist_ok=True)
             print(f"📁 Created output dir: {self.output_dir}")
@@ -285,11 +275,9 @@ class LinkedInCrew:
 
         check_memory_dir()
 
-        # Load configurations
         self.agents_config = self._load_yaml_config("config/agents.yaml")
         self.tasks_config = self._load_yaml_config("config/tasks.yaml")
 
-        # Setup LLMs
         provider = os.getenv("PROVIDER", "openai")
         model = os.getenv("MODEL")
         manager_model = os.getenv("MANAGER_MODEL") or model
@@ -316,12 +304,10 @@ class LinkedInCrew:
             timeout=timeout,
         )
 
-        # Initialize tools and agents
         self._initialize_tools()
         self._test_tools()
         self._initialize_agents()
 
-        # Setup workflow
         workflow_inputs = {
             **self.inputs,
             "agents_config": self.agents_config,
@@ -373,7 +359,6 @@ class LinkedInCrew:
         
         print("\n🔧 Testing tools...")
         
-        # Test web search
         try:
             custom_search = MyCustomDuckDuckGoTool()
             result = custom_search.run("test query")
@@ -385,7 +370,6 @@ class LinkedInCrew:
         except Exception as e:
             print(f"⚠️  Web search tool: NOT WORKING ({str(e)[:50]})")
         
-        # Test knowledge base
         try:
             result = search_knowledge("test")
             self.tools_working["knowledge_base"] = True
@@ -398,7 +382,6 @@ class LinkedInCrew:
     def _initialize_tools(self):
         """Initialize all tools used by agents."""
         
-        # Web search tool
         if os.environ.get("SERPER_API_KEY"):
             try:
                 from crewai_tools import SerperDevTool
@@ -423,7 +406,6 @@ class LinkedInCrew:
                 description="Search the web for information on a given topic",
             )
 
-        # File writer tool
         def write_file(filename: str, content: str) -> str:
             """Write content to file with UTF-8 encoding."""
             try:
@@ -441,7 +423,6 @@ class LinkedInCrew:
             description="Write content to a file with UTF-8 encoding"
         )
 
-        # DALL-E tool
         dalle = DallETool(model="dall-e-3", size="1024x1024", quality="standard", n=1)
         self.dalle_tool = FunctionTool.from_defaults(
             fn=lambda prompt: dalle.run(prompt),
@@ -449,14 +430,12 @@ class LinkedInCrew:
             description="Generate an image using DALL-E based on a text prompt",
         )
 
-        # Image download tool
         self.download_image_tool = FunctionTool.from_defaults(
             fn=download_image_tool,
             name="download_image",
             description="Download an image from a URL",
         )
 
-        # Web scraper tool
         try:
             from crewai_tools import ScrapeWebsiteTool
             scraper = ScrapeWebsiteTool()
@@ -485,7 +464,6 @@ class LinkedInCrew:
                 description="Scrape content from a website URL",
             )
 
-        # Knowledge base tools
         self.search_knowledge_tool = FunctionTool.from_defaults(
             fn=search_knowledge,
             name="search_knowledge",
@@ -501,7 +479,6 @@ class LinkedInCrew:
         """Initialize all ReAct agents."""
         self.agents = {}
 
-        # Generalist Expert Agent
         self.agents["generalist_expert"] = ReActAgent(
             tools=[self.web_search_tool],
             llm=self.llm,
@@ -510,7 +487,6 @@ class LinkedInCrew:
             verbose=True,
         )
 
-        # Product Expert Agent
         print("Activated agent: Product Expert (uses RAG + Scraper)")
         self.agents["product_expert"] = ReActAgent(
             tools=[
@@ -524,7 +500,6 @@ class LinkedInCrew:
             verbose=True,
         )
 
-        # Designer Agent
         self.agents["designer"] = ReActAgent(
             tools=[self.dalle_tool, self.download_image_tool],
             llm=self.llm,
@@ -533,7 +508,6 @@ class LinkedInCrew:
             verbose=True,
         )
 
-        # Planner Agent
         self.agents["planner"] = ReActAgent(
             tools=[self.file_writer_tool],
             llm=self.llm,
@@ -545,13 +519,11 @@ class LinkedInCrew:
     def cleanup(self):
         """Cleanup resources and close all connections."""
         try:
-            # Close LLM connections
             if hasattr(self.llm, 'close'):
                 self.llm.close()
             if hasattr(self.manager_llm, 'close'):
                 self.manager_llm.close()
             
-            # Close agent connections
             for agent_name, agent in self.agents.items():
                 try:
                     if hasattr(agent, 'close'):
@@ -560,8 +532,7 @@ class LinkedInCrew:
                         agent.llm.close()
                 except Exception:
                     pass
-            
-            # Force garbage collection to clean up lingering connections
+
             import gc
             gc.collect()
             
@@ -601,10 +572,7 @@ class LinkedInWorkflow(Workflow):
         self.tools_working = tools_working
         self.expert_type = inputs.get("expert_type", "generalista")
         self.workflow_data = {}
-        # Use existing output directory from inputs
         self.output_dir = Path(self.inputs.get("output_dir", "output"))
-        # Don't create here - it's already created in LinkedInCrew.__init__
-        # self.output_dir.mkdir(parents=True, exist_ok=True)
 
     async def _call_llm(self, llm, prompt: str) -> str:
         """Call LLM directly without agent."""
@@ -628,6 +596,9 @@ class LinkedInWorkflow(Workflow):
         try:
             if hasattr(agent, "run"):
                 handler = agent.run(prompt, max_iterations=max_iterations)
+                async for ev in handler.stream_events():
+                    if isinstance(ev, AgentStream):
+                        print(f"{ev.delta}", end="", flush=True)
                 result = await handler
                 print(f"✅ Agent completed")
                 print(f"📄 Result preview: {str(result)[:200]}...")

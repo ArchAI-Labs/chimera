@@ -2,7 +2,6 @@
 import sys
 import os
 
-# Force UTF-8 encoding on Windows to prevent 'charmap' codec errors
 os.environ.setdefault("PYTHONUTF8", "1")
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
@@ -21,10 +20,8 @@ from pathlib import Path
 import asyncio
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
-# Add project root to path
 sys.path.append(str(Path(__file__).parent))
 
 from crew_llamaindex import LinkedInCrew
@@ -43,8 +40,7 @@ def create_output_directory(base_path: str = "output") -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = Path(base_path) / f"run_{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Create subdirectories
+
     (output_dir / "images").mkdir(exist_ok=True)
     (output_dir / "posts").mkdir(exist_ok=True)
     
@@ -62,7 +58,6 @@ def get_user_inputs() -> dict:
     print("LinkedIn Content Creation Pipeline (LlamaIndex)")
     print("="*60 + "\n")
     
-    # Get expert type
     print("Select expert type:")
     print("1. Generalista (General/Technical content)")
     print("2. Prodotto (Product-focused content with RAG)")
@@ -70,18 +65,15 @@ def get_user_inputs() -> dict:
     
     expert_type = "generalista" if expert_choice == "1" else "prodotto"
     
-    # Get topic
     topic = input("\nEnter content topic [default: AI and Technology]: ").strip()
     topic = topic if topic else "AI and Technology"
     
-    # Get number of posts
     num_posts_str = input("\nNumber of posts to create [default: 5]: ").strip()
     try:
         num_posts = int(num_posts_str) if num_posts_str else 5
     except ValueError:
         num_posts = 5
     
-    # Get posting frequency
     print("\nPosting frequency:")
     print("1. Daily")
     print("2. Weekly")
@@ -125,7 +117,6 @@ def validate_environment() -> bool:
         print("Examples: llama3, mistral, mixtral (for ollama)")
         return False
     
-    # Check provider-specific requirements
     if provider == "openai" and not os.getenv("OPENAI_API_KEY"):
         print("\n❌ Error: OPENAI_API_KEY required for OpenAI provider")
         return False
@@ -138,7 +129,6 @@ def validate_environment() -> bool:
         print("\n❌ Error: ANTHROPIC_API_KEY required for Anthropic provider")
         return False
     
-    # Ollama doesn't require API key, just needs to be running
     if provider == "ollama":
         base_url = os.getenv("BASE_URL", "http://localhost:11434")
         print(f"\n✓ Using Ollama at {base_url}")
@@ -159,7 +149,6 @@ def save_text_file_utf8(filepath: Path, content: str):
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
     
-    # Use binary write mode to bypass Windows default encoding
     with open(filepath, 'wb') as f:
         utf8_bytes = content.encode('utf-8', errors='replace')
         f.write(utf8_bytes)
@@ -176,37 +165,31 @@ def save_results(results: dict, output_dir: str):
     output_path = Path(output_dir)
     
     try:
-        # Save editorial plan
         if "editorial_plan" in results:
             save_text_file_utf8(
                 output_path / "editorial_plan.md",
                 results["editorial_plan"]
             )
         
-        # Save generated content
         if "generated_content" in results:
             save_text_file_utf8(
                 output_path / "generated_content.md",
                 results["generated_content"]
             )
         
-        # Save LinkedIn posts
         if "linkedin_posts" in results:
             save_text_file_utf8(
                 output_path / "posts" / "linkedin_posts.md",
                 results["linkedin_posts"]
             )
         
-        # Save visual assets info
         if "visuals" in results:
             save_text_file_utf8(
                 output_path / "images" / "visuals_info.md",
                 results["visuals"]
             )
         
-        # Save final plan
         if "final_plan" in results:
-            # final_plan might be a status message, not the actual plan content
             final_plan_content = results.get("final_plan", "")
             if isinstance(final_plan_content, str) and len(final_plan_content) > 100:
                 save_text_file_utf8(
@@ -214,7 +197,6 @@ def save_results(results: dict, output_dir: str):
                     final_plan_content
                 )
         
-        # Save complete results as text
         results_text = format_results_summary(results)
         save_text_file_utf8(
             output_path / "complete_results.txt",
@@ -297,31 +279,27 @@ async def run_pipeline_async(inputs: dict, output_dir: str):
         print("Initializing LinkedIn Content Pipeline...")
         print("="*60 + "\n")
         
-        # Add output_dir to inputs to prevent duplicate directory creation
+
         inputs["output_dir"] = output_dir
         
-        # Create crew instance
+
         crew = LinkedInCrew(inputs=inputs)
         
         print("\n🚀 Starting content generation workflow...\n")
-        
-        # Run the workflow
+
         results = await crew.kickoff()
         
         print("\n" + "="*60)
         print("Pipeline Execution Complete!")
         print("="*60 + "\n")
         
-        # Save results (the workflow already saves files, but we save a summary)
         save_results(results, output_dir)
         
-        # Print summary
         if results.get("status") == "success":
             print("\n✅ Content creation successful!")
             print(f"\n📁 Output directory: {output_dir}")
             print("\nGenerated files:")
-            
-            # List actual files that were created
+
             output_path = Path(output_dir)
             md_files = sorted(output_path.rglob("*.md"))
             
@@ -330,7 +308,6 @@ async def run_pipeline_async(inputs: dict, output_dir: str):
                     relative_path = md_file.relative_to(output_path)
                     print(f"  - {relative_path}")
             else:
-                # Fallback to expected files
                 print("  - editorial_plan.md")
                 print("  - generated_content.md")
                 print("  - posts/linkedin_posts.md")
@@ -353,14 +330,11 @@ def main():
     Main entry point
     """
     try:
-        # Validate environment
         if not validate_environment():
             sys.exit(1)
-        
-        # Get user inputs
+
         inputs = get_user_inputs()
-        
-        # Create output directory
+
         output_dir = create_output_directory()
         
         print(f"\n📝 Configuration:")
@@ -370,13 +344,11 @@ def main():
         print(f"   Frequency: {inputs['frequency']}")
         print(f"   Output Directory: {output_dir}")
         
-        # Confirm before proceeding
         confirm = input("\n▶️  Proceed with content generation? (y/n) [default: y]: ").strip().lower()
         if confirm and confirm != 'y':
             print("\n❌ Operation cancelled.")
             sys.exit(0)
         
-        # Run pipeline
         results = asyncio.run(run_pipeline_async(inputs, output_dir))
         
         if results.get("status") == "error":
