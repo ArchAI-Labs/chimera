@@ -11,7 +11,8 @@ dependencies = [
     "requests>=2.31.0",
 
     # Qdrant client with FastEmbed support
-    "qdrant-client[fastembed]==1.14.2",
+    "qdrant-client>=1.7.0",
+    "fastembed>=0.1.0",
 
     # LlamaIndex modular packages used in code
     "llama-index-core>=0.10.0",
@@ -19,6 +20,8 @@ dependencies = [
     "llama-index-embeddings-openai>=0.2.0",
     "llama-index-embeddings-huggingface>=0.2.0",
     "llama-index-vector-stores-qdrant>=0.2.0",
+    "llama-index-embeddings-fastembed>=0.1.0",
+    
 
     # UI and testing
     "panel==1.6.0",
@@ -33,7 +36,7 @@ dependencies = [
 
     # Utilities
     "wget",
-    "duckduckgo-search==8.1.1",
+    "ddgs==9.6.1",
     "ddgs",
 
     # Optional providers
