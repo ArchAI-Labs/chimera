@@ -29,9 +29,22 @@ class QdrantStorage(RAGStorage):
         self._initialize_app()
 
         # Always use a consistent embedding model for storage and retrieval
-        self.embedder = TextEmbedding(
-            model_name=os.getenv("EMBEDDER", "jinaai/jina-embeddings-v2-base-en")
-        )
+        # If EMBEDDER is set (and not 'none'), use FastEmbed with that model; otherwise choose by PROVIDER.
+        provider = (os.getenv("PROVIDER") or "ollama").lower()
+        embedder_name = (os.getenv("EMBEDDER") or "").strip()
+        if not embedder_name or embedder_name.lower() == "none":
+            embedder_name = (
+                "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2" if provider == "gemini"
+                else "jinaai/jina-embeddings-v2-base-en"
+            )
+
+        self.embedder = TextEmbedding(model_name=embedder_name)
+        try:
+            sample_vec = self.embedder.embed("hello world")[0]
+            dim = len(sample_vec)
+            print(f"✓ Qdrant FastEmbed model '{embedder_name}' dimension: {dim}")
+        except Exception as e:
+            print(f"⚠️ Could not compute FastEmbed dimension: {e}")
 
     # -----------------------------------------------------------
     # Semantic search
@@ -96,20 +109,29 @@ class QdrantStorage(RAGStorage):
     # -----------------------------------------------------------
     def _initialize_app(self):
         """Initialize the Qdrant client based on environment configuration."""
-        mode = os.getenv("QDRANT_MODE")
+        mode = os.getenv("QDRANT_MODE") or "memory"
+        url = os.getenv("QDRANT_URL")
+        host = os.getenv("QDRANT_HOST")
+        api_key = os.getenv("QDRANT_API_KEY")
+        port = os.getenv("QDRANT_PORT")
+
         if mode == "memory":
             self.client = QdrantClient(":memory:")
-        elif mode == "cloud":
-            self.client = QdrantClient(
-                host=os.getenv("QDRANT_HOST"), api_key=os.getenv("QDRANT_API_KEY")
-            )
         elif mode == "docker":
-            self.client = QdrantClient(url=os.getenv("QDRANT_URL"))
+            self.client = QdrantClient(url=url or "http://localhost:6333")
+        elif mode == "cloud":
+            if url:
+                self.client = QdrantClient(url=url, api_key=api_key)
+            else:
+                kwargs = {"host": host, "api_key": api_key}
+                if port:
+                    kwargs["port"] = int(port)
+                self.client = QdrantClient(**kwargs)
         else:
             raise ValueError("Qdrant has 3 modes: memory, cloud or docker")
 
         # Set embedder info and ensure the collection exists
-        self.client._embedding_model_name = os.getenv("EMBEDDER")
+        self.client._embedding_model_name = os.getenv("EMBEDDER") or ""
         if not self.client.collection_exists(self.type):
             self.client.create_collection(
                 collection_name=self.type,
