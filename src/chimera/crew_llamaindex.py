@@ -46,7 +46,7 @@ warnings.warn = _silent_warn
 
 ###############################################
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 from datetime import datetime
 import yaml
@@ -248,7 +248,7 @@ def resolve_path(base_dir: Path, maybe_rel: str) -> Path:
     return p if p.is_absolute() else (base_dir / p)
 
 
-
+# Workflow Events
 class EditorialPlanEvent(Event):
     result: str
 
@@ -272,8 +272,62 @@ class VisualsEvent(Event):
     linkedin_posts: str
 
 
-class PlanningCompleteEvent(Event):
-    result: str
+class AgentConfig:
+    """Helper class to manage agent configurations from YAML."""
+    
+    def __init__(self, config_dict: Dict[str, Any]):
+        self.role = config_dict.get("role", "")
+        self.goal = config_dict.get("goal", "")
+        self.backstory = config_dict.get("backstory", "")
+        self.tools = config_dict.get("tools", [])
+        self.max_iterations = config_dict.get("max_iterations", 15)
+    
+    def build_system_prompt(self) -> str:
+        """Build a comprehensive system prompt from config."""
+        parts = []
+        
+        if self.role:
+            parts.append(f"# Your Role\n{self.role}")
+        
+        if self.goal:
+            parts.append(f"# Your Goal\n{self.goal}")
+        
+        if self.backstory:
+            parts.append(f"# Your Background\n{self.backstory}")
+        
+        if parts:
+            return "\n\n".join(parts) + "\n\n---\n\n"
+        return ""
+    
+    def __repr__(self):
+        return f"AgentConfig(role='{self.role[:30]}...', goal='{self.goal[:30]}...')"
+
+
+class TaskConfig:
+    """Helper class to manage task configurations from YAML."""
+    
+    def __init__(self, config_dict: Dict[str, Any]):
+        self.description = config_dict.get("description", "")
+        self.expected_output = config_dict.get("expected_output", "")
+        self.agent = config_dict.get("agent", "")
+    
+    def build_task_prompt(self, context: str = "") -> str:
+        """Build a task prompt from config."""
+        parts = []
+        
+        if self.description:
+            parts.append(f"# Task\n{self.description}")
+        
+        if context:
+            parts.append(f"# Context\n{context}")
+        
+        if self.expected_output:
+            parts.append(f"# Expected Output\n{self.expected_output}")
+        
+        return "\n\n".join(parts) if parts else ""
+    
+    def __repr__(self):
+        return f"TaskConfig(agent='{self.agent}', description='{self.description[:30]}...')"
 
 
 class LinkedInCrew:
@@ -283,6 +337,7 @@ class LinkedInCrew:
         self.inputs = inputs if inputs is not None else {}
         print(f"USER INPUTS RECEIVED: {self.inputs}")
 
+        # Setup output directory
         requested_out = self.inputs.get("output_dir")
         if requested_out:
             self.output_dir = Path(requested_out)
@@ -298,9 +353,15 @@ class LinkedInCrew:
 
         check_memory_dir()
 
-        self.agents_config = self._load_yaml_config("config/agents.yaml")
-        self.tasks_config = self._load_yaml_config("config/tasks.yaml")
+        # Load configurations
+        self.agents_config = self._load_configs("config/agents.yaml")
+        self.tasks_config = self._load_configs("config/tasks.yaml")
+        
+        # Print loaded configs for debugging
+        print(f"\n📋 Loaded {len(self.agents_config)} agent configs: {list(self.agents_config.keys())}")
+        print(f"📋 Loaded {len(self.tasks_config)} task configs: {list(self.tasks_config.keys())}")
 
+        # Setup LLMs
         provider = os.getenv("PROVIDER", "openai")
         model = os.getenv("MODEL")
         manager_model = os.getenv("MANAGER_MODEL") or model
@@ -327,6 +388,7 @@ class LinkedInCrew:
             timeout=timeout,
         )
 
+        # Initialize tools and agents
         self._initialize_tools()
         self._test_tools()
         self._initialize_agents()
@@ -337,10 +399,11 @@ class LinkedInCrew:
         # Setup workflow
         workflow_inputs = {
             **self.inputs,
+            "output_dir": str(self.output_dir),
             "agents_config": self.agents_config,
             "tasks_config": self.tasks_config,
-            "output_dir": str(self.output_dir),
         }
+        
         self.workflow = LinkedInWorkflow(
             agents=self.agents,
             llm=self.llm,
@@ -351,11 +414,26 @@ class LinkedInCrew:
             verbose=True,
         )
 
-    def _load_yaml_config(self, config_path: str) -> Dict[str, Any]:
-        """Load YAML configuration file with error handling."""
+    def _load_configs(self, config_path: str) -> Dict[str, Any]:
+        """Load YAML configuration file and wrap in config classes."""
         try:
             with open(config_path, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f)
+                raw_config = yaml.safe_load(f) or {}
+            
+            # Determine if it's agents or tasks config
+            if "agents.yaml" in config_path:
+                return {
+                    name: AgentConfig(cfg) 
+                    for name, cfg in raw_config.items()
+                }
+            elif "tasks.yaml" in config_path:
+                return {
+                    name: TaskConfig(cfg) 
+                    for name, cfg in raw_config.items()
+                }
+            else:
+                return raw_config
+                
         except FileNotFoundError:
             print(f"⚠️  Config file {config_path} not found. Using defaults.")
             return {}
@@ -462,6 +540,7 @@ class LinkedInCrew:
         
         print("\n🔧 Testing tools...")
         
+        # Test web search
         try:
             custom_search = MyCustomDuckDuckGoTool()
             result = custom_search.run("test query")
@@ -473,6 +552,7 @@ class LinkedInCrew:
         except Exception as e:
             print(f"⚠️  Web search tool: NOT WORKING ({str(e)[:50]})")
         
+        # Test knowledge base
         try:
             result = search_knowledge("test")
             self.tools_working["knowledge_base"] = True
@@ -485,6 +565,7 @@ class LinkedInCrew:
     def _initialize_tools(self):
         """Initialize all tools used by agents."""
         
+        # Web search tool
         if os.environ.get("SERPER_API_KEY"):
             try:
                 from crewai_tools import SerperDevTool
@@ -502,7 +583,6 @@ class LinkedInCrew:
                     description="Search the web for information on a given topic",
                 )
         else:
-            # Use working DuckDuckGo fallback based on ddgs/duckduckgo-search
             custom_search = MyCustomDuckDuckGoTool()
             self.web_search_tool = FunctionTool.from_defaults(
                 fn=lambda query: custom_search.run(query),
@@ -510,6 +590,7 @@ class LinkedInCrew:
                 description="Search the web for information on a given topic",
             )
 
+        # File writer tool
         def write_file(filename: str, content: str) -> str:
             """Write content to file with UTF-8 encoding."""
             try:
@@ -527,6 +608,7 @@ class LinkedInCrew:
             description="Write content to a file with UTF-8 encoding"
         )
 
+        # DALL-E tool
         dalle = DallETool(model="dall-e-3", size="1024x1024", quality="standard", n=1)
         self.dalle_tool = FunctionTool.from_defaults(
             fn=lambda prompt: dalle.run(prompt),
@@ -534,12 +616,14 @@ class LinkedInCrew:
             description="Generate an image using DALL-E based on a text prompt",
         )
 
+        # Download image tool
         self.download_image_tool = FunctionTool.from_defaults(
             fn=download_image_tool,
             name="download_image",
             description="Download an image from a URL",
         )
 
+        # Scraper tool
         try:
             from crewai_tools import ScrapeWebsiteTool
             scraper = ScrapeWebsiteTool()
@@ -582,18 +666,35 @@ class LinkedInCrew:
         )
 
     def _initialize_agents(self):
-        """Initialize all ReAct agents."""
+        """Initialize all ReAct agents with configurations from YAML."""
         self.agents = {}
+
+        # Generalist Expert Agent
+        agent_config = self.agents_config.get("generalist_expert")
+        if agent_config:
+            print(f"✅ Initializing Generalist Expert with config: {agent_config}")
+            max_iter = agent_config.max_iterations
+        else:
+            print("⚠️  No config for generalist_expert, using defaults")
+            max_iter = 15
 
         self.agents["generalist_expert"] = ReActAgent(
             tools=[self.web_search_tool],
             llm=self.llm,
             memory=get_short_term_memory(),
-            max_iterations=15,
+            max_iterations=max_iter,
             verbose=True,
         )
 
-        print("Activated agent: Product Expert (uses RAG + Scraper)")
+        # Product Expert Agent
+        agent_config = self.agents_config.get("product_expert")
+        if agent_config:
+            print(f"✅ Initializing Product Expert with config: {agent_config}")
+            max_iter = agent_config.max_iterations
+        else:
+            print("⚠️  No config for product_expert, using defaults")
+            max_iter = 20
+
         self.agents["product_expert"] = ReActAgent(
             tools=[
                 self.search_knowledge_tool,
@@ -602,23 +703,41 @@ class LinkedInCrew:
             ],
             llm=self.llm,
             memory=get_long_term_memory(),
-            max_iterations=20,
+            max_iterations=max_iter,
             verbose=True,
         )
+
+        # Designer Agent
+        agent_config = self.agents_config.get("designer")
+        if agent_config:
+            print(f"✅ Initializing Designer with config: {agent_config}")
+            max_iter = agent_config.max_iterations
+        else:
+            print("⚠️  No config for designer, using defaults")
+            max_iter = 15
 
         self.agents["designer"] = ReActAgent(
             tools=[self.dalle_tool, self.download_image_tool],
             llm=self.llm,
             memory=get_short_term_memory(),
-            max_iterations=15,
+            max_iterations=max_iter,
             verbose=True,
         )
+
+        # Planner Agent
+        agent_config = self.agents_config.get("planner")
+        if agent_config:
+            print(f"✅ Initializing Planner with config: {agent_config}")
+            max_iter = agent_config.max_iterations
+        else:
+            print("⚠️  No config for planner, using defaults")
+            max_iter = 10
 
         self.agents["planner"] = ReActAgent(
             tools=[self.file_writer_tool],
             llm=self.llm,
             memory=get_entity_memory(),
-            max_iterations=10,
+            max_iterations=max_iter,
             verbose=True,
         )
 
@@ -666,7 +785,7 @@ class LinkedInCrew:
 
 
 class LinkedInWorkflow(Workflow):
-    """Workflow for creating LinkedIn content."""
+    """Workflow for creating LinkedIn content with YAML-driven configuration."""
     
     def __init__(self, agents: Dict[str, ReActAgent], llm, manager_llm,
                  inputs: Dict[str, Any], tools_working: Dict[str, bool], **kwargs):
@@ -679,6 +798,32 @@ class LinkedInWorkflow(Workflow):
         self.expert_type = inputs.get("expert_type", "generalista")
         self.workflow_data = {}
         self.output_dir = Path(self.inputs.get("output_dir", "output"))
+        
+        # Store configs
+        self.agents_config: Dict[str, AgentConfig] = inputs.get("agents_config", {})
+        self.tasks_config: Dict[str, TaskConfig] = inputs.get("tasks_config", {})
+
+    def _get_agent_prompt(self, agent_name: str, task_context: str) -> str:
+        """
+        Build a complete prompt combining agent config and task context.
+        This is the key method that uses YAML configurations.
+        """
+        agent_config = self.agents_config.get(agent_name)
+        
+        if agent_config:
+            system_prompt = agent_config.build_system_prompt()
+            return f"{system_prompt}{task_context}"
+        else:
+            return task_context
+
+    def _get_task_prompt(self, task_name: str, context: str = "") -> str:
+        """Build a task prompt from task configuration."""
+        task_config = self.tasks_config.get(task_name)
+        
+        if task_config:
+            return task_config.build_task_prompt(context)
+        else:
+            return context
 
     async def _call_llm(self, llm, prompt: str) -> str:
         """Call LLM directly without agent."""
@@ -693,48 +838,54 @@ class LinkedInWorkflow(Workflow):
         print(f"📄 Preview: {result[:200]}...")
         return result
 
-    async def _ask_agent_with_fallback(self, agent: ReActAgent, prompt: str, 
-                                       max_iterations: int = 15, fallback_llm=None) -> str:
-        """Call agent with fallback to direct LLM on max iterations error."""
-        print(f"\n🔧 Calling ReActAgent (max_iterations={max_iterations})...")
-        print(f"📝 Prompt preview: {prompt[:150]}...")
+    async def _ask_agent(self, agent_name: str, prompt: str, 
+                        max_iterations: Optional[int] = None) -> str:
+        """
+        Call an agent with its configuration-based prompt.
+        Automatically includes agent's role, goal, and backstory from YAML.
+        """
+        agent = self.agents.get(agent_name)
+        if not agent:
+            raise ValueError(f"Agent '{agent_name}' not found")
+        
+        # Build the full prompt with agent context
+        full_prompt = self._get_agent_prompt(agent_name, prompt)
+        
+        # Get max_iterations from config if not specified
+        if max_iterations is None:
+            agent_config = self.agents_config.get(agent_name)
+            max_iterations = agent_config.max_iterations if agent_config else 15
+        
+        print(f"\n🔧 Calling {agent_name} (max_iterations={max_iterations})...")
+        print(f"📝 Prompt includes agent config: {agent_name in self.agents_config}")
         
         try:
             if hasattr(agent, "run"):
-                handler = agent.run(prompt, max_iterations=max_iterations)
+                handler = agent.run(full_prompt, max_iterations=max_iterations)
                 async for ev in handler.stream_events():
                     if isinstance(ev, AgentStream):
                         print(f"{ev.delta}", end="", flush=True)
                 result = await handler
-                print(f"✅ Agent completed")
-                print(f"📄 Result preview: {str(result)[:200]}...")
+                print(f"\n✅ {agent_name} completed")
                 return str(result)
             elif hasattr(agent, "aquery"):
-                result = await agent.aquery(prompt)
-                print(f"✅ Agent completed")
-                return str(result)
-            elif hasattr(agent, "achat"):
-                result = await agent.achat(prompt)
-                print(f"✅ Agent completed")
+                result = await agent.aquery(full_prompt)
+                print(f"✅ {agent_name} completed")
                 return str(result)
             else:
-                raise AttributeError("Agent has no usable run/aquery/achat methods")
+                raise AttributeError(f"Agent {agent_name} has no usable run/aquery methods")
         except Exception as e:
             error_msg = str(e)
             if "Max iterations" in error_msg or "WorkflowRuntimeError" in error_msg:
-                print(f"⚠️  Agent hit max iterations - falling back to direct LLM...")
-                if fallback_llm:
-                    return await self._call_llm(fallback_llm, prompt)
-                else:
-                    print(f"❌ No fallback LLM provided")
-                    raise
+                print(f"⚠️  {agent_name} hit max iterations - falling back to direct LLM...")
+                return await self._call_llm(self.llm, full_prompt)
             else:
-                print(f"❌ Agent error: {error_msg[:100]}")
+                print(f"❌ {agent_name} error: {error_msg[:100]}")
                 raise
 
     @step
     async def editorial_plan(self, ctx: Context, ev: StartEvent) -> EditorialPlanEvent:
-        """Step 1: Create editorial plan."""
+        """Step 1: Create editorial plan using task configuration."""
         print("\n" + "="*60)
         print("=== STEP 1: Editorial Planning ===")
         print("="*60)
@@ -743,7 +894,16 @@ class LinkedInWorkflow(Workflow):
         num_posts = self.inputs.get("num_posts", 5)
         frequency = self.inputs.get("frequency", "weekly")
 
-        prompt = f"""You are an expert content strategist. Create an editorial plan for {num_posts} LinkedIn posts about {topic}.
+        # Build prompt from task config if available
+        task_config = self.tasks_config.get("editorial_plan")
+        if task_config:
+            base_context = f"""Topic: {topic}
+Number of posts: {num_posts}
+Frequency: {frequency}"""
+            prompt = self._get_task_prompt("editorial_plan", base_context)
+            print("✅ Using task configuration for editorial planning")
+        else:
+            prompt = f"""You are an expert content strategist. Create an editorial plan for {num_posts} LinkedIn posts about {topic}.
 The posts should be published {frequency}.
 
 Include:
@@ -753,6 +913,7 @@ Include:
 4. Content mix (educational, promotional, thought leadership)
 
 Provide a detailed, structured editorial plan."""
+            print("⚠️  No task config found, using default prompt")
 
         result = await self._call_llm(self.manager_llm, prompt)
 
@@ -765,7 +926,7 @@ Provide a detailed, structured editorial plan."""
 
     @step
     async def content_generation(self, ctx: Context, ev: EditorialPlanEvent) -> ContentGenerationEvent:
-        """Step 2: Generate content based on editorial plan."""
+        """Step 2: Generate content using appropriate expert agent with YAML config."""
         print("\n" + "="*60)
         print("=== STEP 2: Content Generation ===")
         print("="*60)
@@ -773,37 +934,39 @@ Provide a detailed, structured editorial plan."""
         editorial_plan = ev.result
         topic = self.inputs.get("topic", "AI and Technology")
 
-        if self.expert_type == "generalista":
-            if self.tools_working.get("web_search"):
-                print("✅ Using Generalist Expert with web search...")
-                prompt = f"""Based on this editorial plan, generate detailed technical content about {topic}.
+        # Build task context
+        task_context = f"""Based on this editorial plan, generate detailed content about {topic}.
 
 Editorial Plan:
 {editorial_plan}
 
 Your task:
-1. Use the web_search tool to find current information about {topic}
-2. Generate comprehensive technical content covering:
-   - Industry trends and insights
-   - Technical explanations
-   - Best practices
-   - Real-world applications
+"""
 
-Search for recent information and incorporate it into your response.
-Format the output as structured, detailed content ready to be transformed into LinkedIn posts."""
+        if self.expert_type == "generalista":
+            if self.tools_working.get("web_search"):
+                print("✅ Using Generalist Expert with web search and YAML config...")
                 
-                agent = self.agents["generalist_expert"]
-                result = await self._ask_agent_with_fallback(
-                    agent, prompt, max_iterations=15, fallback_llm=self.llm
-                )
+                task_config = self.tasks_config.get("technical_content")
+                if task_config:
+                    task_context = self._get_task_prompt("technical_content", f"Editorial Plan:\n{editorial_plan}\n\nTopic: {topic}")
+                    print("✅ Using technical_content task config")
+                else:
+                    task_context += """1. Use the web_search tool to find current information
+        2. Generate comprehensive technical content covering:
+        - Industry trends and insights
+        - Technical explanations
+        - Best practices
+        - Real-world applications
+
+        Search for recent information and incorporate it into your response.
+        Format the output as structured, detailed content ready to be transformed into LinkedIn posts."""
+                
+                result = await self._ask_agent("generalist_expert", task_context)
                 content_type = "technical_with_search"
             else:
-                print("⚠️  Web search not working - using direct LLM instead...")
-                prompt = f"""You are an expert content creator. Based on this editorial plan, generate detailed, engaging content about {topic}.
-
-Editorial Plan:
-{editorial_plan}
-
+                print("⚠️  Web search not working - using direct LLM...")
+                prompt = self._get_agent_prompt("generalist_expert", task_context + """
 Generate comprehensive content covering:
 - Industry trends and insights
 - Technical explanations
@@ -811,42 +974,33 @@ Generate comprehensive content covering:
 - Real-world applications
 - Examples and case studies
 
-Format the output as structured, detailed content ready to be transformed into LinkedIn posts.
-Make it substantive and valuable - at least 500 words of quality content."""
-
+Make it substantive and valuable - at least 500 words of quality content.""")
                 result = await self._call_llm(self.llm, prompt)
                 content_type = "technical_direct"
 
         elif self.expert_type == "prodotto":
             if self.tools_working.get("knowledge_base"):
-                print("✅ Using Product Expert with knowledge base...")
-                prompt = f"""Based on this editorial plan, generate product-focused content about {topic}.
-
-Editorial Plan:
-{editorial_plan}
-
-Your task:
-1. Use the search_knowledge tool to find relevant product information
-2. Generate product-focused content covering:
-   - Product features and benefits
-   - Use cases and success stories
-   - Competitive advantages
-   - Customer pain points and solutions
-
-Format the output as structured content ready for LinkedIn posts."""
+                print("✅ Using Product Expert with knowledge base and YAML config...")
                 
-                agent = self.agents["product_expert"]
-                result = await self._ask_agent_with_fallback(
-                    agent, prompt, max_iterations=20, fallback_llm=self.llm
-                )
+                task_config = self.tasks_config.get("product_content")
+                if task_config:
+                    task_context = self._get_task_prompt("product_content", f"Editorial Plan:\n{editorial_plan}\n\nTopic: {topic}")
+                    print("✅ Using product_content task config")
+                else:
+                    task_context += """1. Use the search_knowledge tool to find relevant product information
+        2. Generate product-focused content covering:
+        - Product features and benefits
+        - Use cases and success stories
+        - Competitive advantages
+        - Customer pain points and solutions
+
+        Format the output as structured content ready for LinkedIn posts."""
+                
+                result = await self._ask_agent("product_expert", task_context)
                 content_type = "product_with_kb"
             else:
-                print("⚠️  Knowledge base not working - using direct LLM instead...")
-                prompt = f"""You are an expert content creator. Based on this editorial plan, generate detailed product-focused content about {topic}.
-
-Editorial Plan:
-{editorial_plan}
-
+                print("⚠️  Knowledge base not working - using direct LLM...")
+                prompt = self._get_agent_prompt("product_expert", task_context + """
 Generate comprehensive content covering:
 - Product features and benefits
 - Use cases and success stories
@@ -854,18 +1008,12 @@ Generate comprehensive content covering:
 - Customer pain points and solutions
 - Examples and case studies
 
-Format the output as structured, detailed content ready to be transformed into LinkedIn posts.
-Make it substantive and valuable - at least 500 words of quality content."""
-
+Make it substantive and valuable - at least 500 words of quality content.""")
                 result = await self._call_llm(self.llm, prompt)
                 content_type = "product_direct"
         else:
-            print("Using direct LLM (no expert type specified)...")
-            prompt = f"""You are an expert content creator. Based on this editorial plan, generate detailed, engaging content about {topic}.
-
-Editorial Plan:
-{editorial_plan}
-
+            print("⚠️  Using direct LLM (no expert type specified)...")
+            prompt = task_context + """
 Generate comprehensive content covering:
 - Industry trends and insights
 - Technical explanations
@@ -873,9 +1021,7 @@ Generate comprehensive content covering:
 - Real-world applications
 - Examples and case studies
 
-Format the output as structured, detailed content ready to be transformed into LinkedIn posts.
 Make it substantive and valuable - at least 500 words of quality content."""
-
             result = await self._call_llm(self.llm, prompt)
             content_type = "general"
 
@@ -894,14 +1040,27 @@ Make it substantive and valuable - at least 500 words of quality content."""
     async def write_linkedin_post(self, ctx: Context, ev: ContentGenerationEvent) -> PostWritingEvent:
         """Step 3: Transform content into LinkedIn posts."""
         print("\n" + "="*60)
-        print("=== STEP 3: Writing LinkedIn Post ===")
+        print("=== STEP 3: Writing LinkedIn Posts ===")
         print("="*60)
 
         content = ev.result
         editorial_plan = ev.editorial_plan
         num_posts = self.inputs.get('num_posts', 5)
 
-        prompt = f"""You are an expert LinkedIn copywriter. Transform this content into {num_posts} engaging, ready-to-publish LinkedIn posts.
+        # Use task config if available
+        task_config = self.tasks_config.get("linkedin_post")
+        if task_config:
+            context = f"""Editorial Plan:
+{editorial_plan[:500]}...
+
+Generated Content:
+{content}
+
+Number of posts to create: {num_posts}"""
+            prompt = self._get_task_prompt("write_posts", context)
+            print("✅ Using task configuration for post writing")
+        else:
+            prompt = f"""You are an expert LinkedIn copywriter. Transform this content into {num_posts} engaging, ready-to-publish LinkedIn posts.
 
 Editorial Plan:
 {editorial_plan[:500]}...
@@ -947,37 +1106,53 @@ And so on..."""
 
     @step
     async def create_visuals(self, ctx: Context, ev: PostWritingEvent) -> VisualsEvent:
-        """Step 4: Create visual concepts for posts."""
+        """Step 4: Create visual concepts using Designer agent with YAML config."""
         print("\n" + "="*60)
         print("=== STEP 4: Creating Visual Assets ===")
         print("="*60)
 
         posts = ev.result
 
-        prompt = f"""You are a visual designer. Based on these LinkedIn posts, create detailed visual design concepts.
+        # Use designer agent with its config
+        posts = ev.result
 
-LinkedIn Posts:
-{posts[:1000]}
+        # Use task config if available
+        task_config = self.tasks_config.get("visuals")
+        if task_config:
+            task_context = self._get_task_prompt("visuals", f"LinkedIn Posts:\n{posts[:1000]}")
+            print("✅ Using visuals task config")
+        else:
+            task_context = f"""Based on these LinkedIn posts, create detailed visual design concepts.
 
-For each post, provide:
-1. Visual concept description (what the image should show)
-2. Color scheme (primary and secondary colors)
-3. Design style (minimalist, bold, professional, etc.)
-4. Key visual elements to include
-5. Text overlay suggestions (if any)
+    LinkedIn Posts:
+    {posts[:1000]}
 
-Format as:
+    For each post, provide:
+    1. Visual concept description (what the image should show)
+    2. Color scheme (primary and secondary colors)
+    3. Design style (minimalist, bold, professional, etc.)
+    4. Key visual elements to include
+    5. Text overlay suggestions (if any)
 
-=== VISUAL 1 ===
-Concept: [description]
-Colors: [color scheme]
-Style: [style]
-Elements: [key elements]
+    Format as:
 
-=== VISUAL 2 ===
-[and so on...]"""
+    === VISUAL 1 ===
+    Concept: [description]
+    Colors: [color scheme]
+    Style: [style]
+    Elements: [key elements]
 
-        result = await self._call_llm(self.llm, prompt)
+    === VISUAL 2 ===
+    [and so on...]"""
+
+        # Check if we should use the designer agent or direct LLM
+        agent_config = self.agents_config.get("designer")
+        if agent_config:
+            print("✅ Using Designer agent with YAML config")
+            result = await self._ask_agent("designer", task_context)
+        else:
+            print("⚠️  No designer config, using direct LLM")
+            result = await self._call_llm(self.llm, task_context)
 
         self.workflow_data["visuals"] = result
         print(f"\n✅ Visual concepts created: {len(result)} characters")
@@ -995,54 +1170,60 @@ Elements: [key elements]
 
     @step
     async def plan_posts(self, ctx: Context, ev: VisualsEvent) -> StopEvent:
-        """Step 5: Create final content plan and save all results."""
+        """Step 5: Create final content plan using Planner agent."""
         print("\n" + "="*60)
-        print("=== STEP 5: Planning and Saving ===")
+        print("=== STEP 5: Final Planning ===")
         print("="*60)
 
         editorial_plan = ev.editorial_plan
         content = ev.generated_content
         posts = ev.linkedin_posts
         visuals = ev.result
+        task_config = self.tasks_config.get("plan_posts")
+        if task_config:
+            print("✅ Using plan_posts task config")
+            # The task config describes what to do, we still build the actual content
+        else:
+            print("⚠️ No plan_posts task config found")
 
-        final_plan = f"""# LinkedIn Content Calendar
+        # Use planner agent to create the final plan
+        task_context = f"""Create a comprehensive LinkedIn content calendar and execution plan.
 
-## Editorial Plan
-{editorial_plan}
+    Editorial Plan:
+    {editorial_plan[:500]}...
 
----
+    Generated Content Summary:
+    {content[:500]}...
 
-## Generated Content
-{content}
+    LinkedIn Posts:
+    {posts}
 
----
+    Visual Assets:
+    {visuals[:500]}...
 
-## LinkedIn Posts (Ready to Publish)
-{posts}
+    Create a final content calendar that includes:
+    - Publishing schedule with specific dates
+    - Each post with its visual asset reference
+    - Hashtag strategy
+    - Optimal posting times
+    - Performance tracking metrics
+    - Engagement strategy
+    - Success criteria
 
----
+    Topic: {self.inputs.get('topic', 'AI and Technology')}
+    Frequency: {self.inputs.get('frequency', 'weekly')}
+    Number of posts: {self.inputs.get('num_posts', 5)}
 
-## Visual Asset Concepts
-{visuals}
+    Format as a comprehensive markdown document."""
 
----
-
-## Publishing Schedule
-- Frequency: {self.inputs.get('frequency', 'weekly')}
-- Number of posts: {self.inputs.get('num_posts', 5)}
-- Topic: {self.inputs.get('topic', 'AI and Technology')}
-
-## Engagement Strategy
-1. Post at optimal times (9 AM, 12 PM, or 5 PM on weekdays)
-2. Respond to comments within 1 hour
-3. Engage with relevant posts in your network
-4. Track metrics: likes, comments, shares, profile views
-
-## Success Metrics
-- Target engagement rate: 3-5%
-- Target reach: 1000+ impressions per post
-- Target profile views: 50+ per week
-"""
+        # Check if we should use planner agent
+        agent_config = self.agents_config.get("planner")
+        if agent_config:
+            print("✅ Using Planner agent with YAML config")
+            final_plan = await self._ask_agent("planner", task_context)
+        else:
+            print("⚠️ No planner config, using direct LLM")
+            final_plan = await self._call_llm(self.llm, task_context)
 
         try:
             save_text_utf8(self.output_dir / "final_content_plan.md", final_plan)
