@@ -24,7 +24,7 @@ class MyCustomDuckDuckGoTool:
     def _initialize_search(self):
         """Initialize the DuckDuckGo search backend"""
         try:
-            from duckduckgo_search import DDGS
+            from ddgs import DDGS
             self.ddgs = DDGS()
         except ImportError:
             raise ImportError(

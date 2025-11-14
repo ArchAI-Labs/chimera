@@ -33,7 +33,7 @@ warnings.filterwarnings("ignore", message=".*model_fields.*")
 warnings.filterwarnings("ignore", message=".*unclosed.*")
 warnings.filterwarnings("ignore", message=".*socket.*")
 warnings.filterwarnings("ignore", message=".*transport.*")
-warnings.filterwarnings("ignore", message=r".*`duckduckgo_search`\) has been renamed to `ddgs`.*", category=RuntimeWarning)
+warnings.filterwarnings("ignore", message=r".*`ddgs`\) has been renamed to `ddgs`.*", category=RuntimeWarning)
 
 _original_warn = warnings.warn
 def _silent_warn(message, category=UserWarning, stacklevel=1):
@@ -140,9 +140,32 @@ except ImportError:
     try:
         from tools.duckduckgo_tool import MyCustomDuckDuckGoTool
     except ImportError:
+        # Real DuckDuckGo search fallback using ddgs or duckduckgo-search
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            try:
+                from duckduckgo_search import DDGS
+            except ImportError:
+                DDGS = None
+
         class MyCustomDuckDuckGoTool:
             def run(self, query: str) -> str:
-                return f"Search results for: {query} (tool not available)"
+                if DDGS is None:
+                    return f"Error: DuckDuckGo search library not available for query: {query}"
+                try:
+                    with DDGS() as ddg:
+                        # Fetch top results with title, link, and snippet if available
+                        results = ddg.text(query, max_results=5)
+                    lines = []
+                    for i, item in enumerate(results or [], 1):
+                        title = item.get("title") or item.get("source") or "No title"
+                        href = item.get("href") or item.get("link") or ""
+                        snippet = item.get("body") or item.get("snippet") or ""
+                        lines.append(f"{i}. {title}\n{href}\n{snippet}\n")
+                    return "\n".join(lines) if lines else "No results found."
+                except Exception as e:
+                    return f"Error performing DuckDuckGo search: {str(e)}"
 
     try:
         from tools.dalle_tool import download_image_tool, DallETool
@@ -308,6 +331,10 @@ class LinkedInCrew:
         self._test_tools()
         self._initialize_agents()
 
+        # Ingest product sites from env into Qdrant
+        self._ingest_product_sites()
+
+        # Setup workflow
         workflow_inputs = {
             **self.inputs,
             "agents_config": self.agents_config,
@@ -349,6 +376,82 @@ class LinkedInCrew:
             callbacks=[print_output],
         )
 
+    def _ingest_product_sites(self):
+        """Scrape PRODUCT_SITES env and upsert content into Qdrant."""
+        sites_str = os.getenv("PRODUCT_SITES", "").strip()
+        if not sites_str:
+            print("ℹ️ No PRODUCT_SITES provided; skipping ingestion.")
+            return
+
+        # Parse comma-separated URLs, trim, and deduplicate
+        urls = [u.strip() for u in sites_str.split(",") if u.strip()]
+        if not urls:
+            print("ℹ️ PRODUCT_SITES is empty after parsing; skipping ingestion.")
+            return
+
+        collection = os.getenv("QDRANT_COLLECTION", "linkedin_knowledge")
+        print(f"🔎 Ingesting {len(urls)} product site(s) into Qdrant collection '{collection}'")
+
+        # Read chunking parameters from env (with defaults)
+        try:
+            chunk_size = int(os.getenv("CHUNK_SIZE", "512"))
+        except Exception:
+            chunk_size = 512
+        try:
+            chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "50"))
+        except Exception:
+            chunk_overlap = 50
+        # Ensure sensible bounds: size >= 1, 0 <= overlap < size
+        chunk_size = max(1, chunk_size)
+        chunk_overlap = max(0, min(chunk_overlap, chunk_size - 1))
+
+        for url in urls:
+            try:
+                # Fetch content
+                resp = requests.get(url, timeout=20)
+                resp.raise_for_status()
+                content_type = resp.headers.get("Content-Type", "").lower()
+
+                text = ""
+                if "text/markdown" in content_type or url.endswith(".md") or "raw.githubusercontent.com" in url:
+                    # Treat as text/markdown
+                    text = resp.text
+                elif "text/plain" in content_type:
+                    text = resp.text
+                else:
+                    # HTML fallback: extract visible text
+                    try:
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(resp.content, "html.parser")
+                        text = soup.get_text(separator="\n", strip=True)
+                    except Exception as parse_err:
+                        # Fallback to raw text
+                        text = resp.text
+                        print(f"⚠️ HTML parse error for {url}: {parse_err}. Using raw text.")
+
+                # Sanitize/limit extremely long content to avoid token blowups
+                if not text or len(text.strip()) < 50:
+                    print(f"⚠️ Skipping {url}: content too short or empty")
+                    continue
+
+                # Optional: clip to a reasonable length for indexing
+                max_chars = 50_000
+                clipped = text[:max_chars]
+
+                # Upsert into Qdrant with metadata and env-driven chunking
+                metadata = {"url": url, "source": url, "type": "product_site"}
+                result = upsert_knowledge(
+                    clipped,
+                    metadata=metadata,
+                    collection_name=collection,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap
+                )
+
+                print(f"✓ Ingested from {url}: {result}")
+            except Exception as e:
+                print(f"❌ Error ingesting {url}: {e}")
+
     def _test_tools(self):
         """Test which tools are working properly."""
         self.tools_working = {
@@ -362,11 +465,11 @@ class LinkedInCrew:
         try:
             custom_search = MyCustomDuckDuckGoTool()
             result = custom_search.run("test query")
-            if result and len(str(result)) > 10:
+            if result and isinstance(result, str) and len(result) > 10 and "Error" not in result:
                 self.tools_working["web_search"] = True
                 print("✅ Web search tool: WORKING")
             else:
-                print("⚠️  Web search tool: NOT WORKING (empty results)")
+                print("⚠️  Web search tool: NOT WORKING (empty or error)")
         except Exception as e:
             print(f"⚠️  Web search tool: NOT WORKING ({str(e)[:50]})")
         
@@ -399,6 +502,7 @@ class LinkedInCrew:
                     description="Search the web for information on a given topic",
                 )
         else:
+            # Use working DuckDuckGo fallback based on ddgs/duckduckgo-search
             custom_search = MyCustomDuckDuckGoTool()
             self.web_search_tool = FunctionTool.from_defaults(
                 fn=lambda query: custom_search.run(query),
@@ -464,13 +568,15 @@ class LinkedInCrew:
                 description="Scrape content from a website URL",
             )
 
+        # Knowledge base tools (respect QDRANT_COLLECTION env)
+        collection = os.getenv("QDRANT_COLLECTION", "linkedin_knowledge")
         self.search_knowledge_tool = FunctionTool.from_defaults(
-            fn=search_knowledge,
+            fn=lambda query: search_knowledge(query, collection_name=collection),
             name="search_knowledge",
             description="Search the knowledge base for relevant information",
         )
         self.upsert_knowledge_tool = FunctionTool.from_defaults(
-            fn=upsert_knowledge,
+            fn=lambda text, metadata=None: upsert_knowledge(text, metadata=metadata, collection_name=collection),
             name="upsert_knowledge",
             description="Add or update information in the knowledge base",
         )
@@ -482,7 +588,7 @@ class LinkedInCrew:
         self.agents["generalist_expert"] = ReActAgent(
             tools=[self.web_search_tool],
             llm=self.llm,
-            memory=ChatMemoryBuffer.from_defaults(token_limit=4000),
+            memory=get_short_term_memory(),
             max_iterations=15,
             verbose=True,
         )
@@ -495,7 +601,7 @@ class LinkedInCrew:
                 self.scraper_tool,
             ],
             llm=self.llm,
-            memory=ChatMemoryBuffer.from_defaults(token_limit=4000),
+            memory=get_long_term_memory(),
             max_iterations=20,
             verbose=True,
         )
@@ -503,7 +609,7 @@ class LinkedInCrew:
         self.agents["designer"] = ReActAgent(
             tools=[self.dalle_tool, self.download_image_tool],
             llm=self.llm,
-            memory=ChatMemoryBuffer.from_defaults(token_limit=4000),
+            memory=get_short_term_memory(),
             max_iterations=15,
             verbose=True,
         )
@@ -511,7 +617,7 @@ class LinkedInCrew:
         self.agents["planner"] = ReActAgent(
             tools=[self.file_writer_tool],
             llm=self.llm,
-            memory=ChatMemoryBuffer.from_defaults(token_limit=4000),
+            memory=get_entity_memory(),
             max_iterations=10,
             verbose=True,
         )
@@ -962,3 +1068,35 @@ Elements: [key elements]
                 "output_directory": str(self.output_dir),
             }
         )
+
+    def _test_tools(self):
+        """Test which tools are working properly."""
+        self.tools_working = {
+            "web_search": False,
+            "file_writer": True,
+            "knowledge_base": False,
+        }
+        
+        print("\n🔧 Testing tools...")
+        
+        # Test web search
+        try:
+            custom_search = MyCustomDuckDuckGoTool()
+            result = custom_search.run("site:duckduckgo.com test")
+            if result and isinstance(result, str) and len(result) > 10 and "Error" not in result:
+                self.tools_working["web_search"] = True
+                print("✅ Web search tool: WORKING")
+            else:
+                print("⚠️  Web search tool: NOT WORKING (empty or error)")
+        except Exception as e:
+            print(f"⚠️  Web search tool: NOT WORKING ({str(e)[:50]})")
+        
+        # Test knowledge base
+        try:
+            result = search_knowledge("test")
+            self.tools_working["knowledge_base"] = True
+            print("✅ Knowledge base: WORKING")
+        except Exception as e:
+            print(f"⚠️  Knowledge base: NOT WORKING ({str(e)[:50]})")
+        
+        print("")

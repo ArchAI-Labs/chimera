@@ -1,15 +1,18 @@
-version: '3.8'
-
 services:
   qdrant:
     image: qdrant/qdrant:v1.15.3
     container_name: qdrant
     restart: always
     ports:
-      - "6333:6333" # Porta gRPC
-      - "6334:6334" # Porta REST
+      - "6333:6333" # REST API
+      - "6334:6334" # gRPC API
     volumes:
       - qdrant-storage:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   qdrant-storage:

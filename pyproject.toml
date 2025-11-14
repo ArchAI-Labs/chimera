@@ -5,36 +5,57 @@ description = "chimera using crewAI"
 authors = [{ name = "Nicola Procopio", email = "nicola.procopio@acsoftware.it" }]
 requires-python = ">=3.10,<3.13"
 dependencies = [
+    # Core app and tools
     "crewai[tools]>=0.98.0,<1.0.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+
+    # Qdrant client with FastEmbed support
+    "qdrant-client>=1.7.0",
+    "fastembed>=0.1.0",
+
+    # LlamaIndex modular packages used in code
+    "llama-index-core>=0.10.0",
+    "llama-index-llms-ollama>=0.2.0",
+    "llama-index-embeddings-openai>=0.2.0",
+    "llama-index-embeddings-huggingface>=0.2.0",
+    "llama-index-vector-stores-qdrant>=0.2.0",
+    "llama-index-embeddings-fastembed>=0.1.0",
+    
+
+    # UI and testing
+    "panel==1.6.0",
+    "pytest==8.2.1",
+
+    # Document parsing and language tooling
+    "pymupdf==1.25.3",          # import fitz from PyMuPDF; no separate 'fitz' package
     "esprima==4.0.1",
     "tree-sitter==0.24.0",
     "tree-sitter-languages==1.10.2",
-    "panel==1.6.0",
-    "google-generativeai==0.8.4",
-    "groq==0.25.0",
-    "pytest==8.2.1",
-    "qdrant-client[fastembed]==1.14.2",
-    "jinaai>=0.2.0",
-    "fitz",
-    "pymupdf==1.25.3",
     "javalang",
+
+    # Utilities
     "wget",
-    "duckduckgo-search==8.1.1",
-    "langchain_community",
+    "ddgs==9.6.1",
     "ddgs",
 
+    # Optional providers
+    "google-generativeai==0.8.4",
+    "groq==0.25.0",
 ]
 
 [project.scripts]
-code_explainer = "chimera.main:run"
-run_crew = "chimera.main:run"
-train = "chimera.main:train"
-replay = "chimera.main:replay"
-test = "chimera.main:test"
+# Use main() as the entry point (run via `python -m chimera.main` or these console scripts)
+chimera = "chimera.main:main"
+run_crew = "chimera.main:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# Ensure src-layout packages are discovered correctly when building
+[tool.hatch.build.targets.wheel]
+packages = ["src/chimera"]
 
 [tool.crewai]
 type = "crew"
