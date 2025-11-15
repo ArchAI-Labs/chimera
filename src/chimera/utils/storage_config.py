@@ -1,8 +1,3 @@
-from crewai.memory import LongTermMemory, ShortTermMemory, EntityMemory
-from crewai.memory.storage import ltm_sqlite_storage
-from .storage_qdrant import QdrantStorage
-
-
 """
 LlamaIndex-compatible memory configuration.
 
@@ -17,6 +12,8 @@ These return LlamaIndex ChatMemoryBuffer instances with configurable token limit
 from typing import Optional
 import os
 from llama_index.core.memory import ChatMemoryBuffer
+
+from .storage_qdrant import QdrantStorage
 
 
 def _env_int(name: str, default: int) -> int:
@@ -55,30 +52,3 @@ def get_entity_memory(token_limit: Optional[int] = None) -> ChatMemoryBuffer:
     """
     limit = token_limit or _env_int("ENTITY_TOKEN_LIMIT", 4000)
     return ChatMemoryBuffer.from_defaults(token_limit=limit)
-
-
-def get_long_term_memory():
-    ltm = LongTermMemory(
-        storage=ltm_sqlite_storage.LTMSQLiteStorage(
-            db_path="./memory/long_term_memory_storage.db"
-        )
-    )
-    return ltm
-
-
-def get_short_term_memory():
-    stm = ShortTermMemory(
-        storage=QdrantStorage(
-            type="short_term",
-        )
-    )
-    return stm
-
-
-def get_entity_memory():
-    entity = EntityMemory(
-        storage=QdrantStorage(
-            type="entity_storage",
-        )
-    )
-    return entity

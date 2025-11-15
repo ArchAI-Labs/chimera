@@ -1,0 +1,7 @@
+-r requirements.txt
+
+pytest>=8.2.1
+pytest-cov>=4.1.0
+pytest-asyncio>=0.23.7
+pytest-env>=0.8.1
+requests-mock>=1.10.0
