@@ -50,9 +50,11 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 from datetime import datetime
 import yaml
+from bs4 import BeautifulSoup
 import requests
 import asyncio
 from dotenv import load_dotenv
+
 
 try:
     from llama_index.core.agent.workflow import ReActAgent
@@ -140,7 +142,6 @@ except ImportError:
     try:
         from tools.duckduckgo_tool import MyCustomDuckDuckGoTool
     except ImportError:
-        # Real DuckDuckGo search fallback using ddgs or duckduckgo-search
         try:
             from ddgs import DDGS
         except ImportError:
@@ -353,15 +354,12 @@ class LinkedInCrew:
 
         check_memory_dir()
 
-        # Load configurations
         self.agents_config = self._load_configs("config/agents.yaml")
         self.tasks_config = self._load_configs("config/tasks.yaml")
         
-        # Print loaded configs for debugging
         print(f"\n📋 Loaded {len(self.agents_config)} agent configs: {list(self.agents_config.keys())}")
         print(f"📋 Loaded {len(self.tasks_config)} task configs: {list(self.tasks_config.keys())}")
 
-        # Setup LLMs
         provider = os.getenv("PROVIDER", "openai")
         model = os.getenv("MODEL")
         manager_model = os.getenv("MANAGER_MODEL") or model
@@ -388,15 +386,12 @@ class LinkedInCrew:
             timeout=timeout,
         )
 
-        # Initialize tools and agents
         self._initialize_tools()
         self._test_tools()
         self._initialize_agents()
 
-        # Ingest product sites from env into Qdrant
         self._ingest_product_sites()
 
-        # Setup workflow
         workflow_inputs = {
             **self.inputs,
             "output_dir": str(self.output_dir),
@@ -415,7 +410,6 @@ class LinkedInCrew:
         )
 
     def _load_configs(self, config_path: str) -> Dict[str, Any]:
-        """Load YAML configuration file and wrap in config classes."""
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 raw_config = yaml.safe_load(f) or {}
@@ -499,7 +493,6 @@ class LinkedInCrew:
                 else:
                     # HTML fallback: extract visible text
                     try:
-                        from bs4 import BeautifulSoup
                         soup = BeautifulSoup(resp.content, "html.parser")
                         text = soup.get_text(separator="\n", strip=True)
                     except Exception as parse_err:
@@ -540,7 +533,6 @@ class LinkedInCrew:
         
         print("\n🔧 Testing tools...")
         
-        # Test web search
         try:
             custom_search = MyCustomDuckDuckGoTool()
             result = custom_search.run("test query")
@@ -563,32 +555,15 @@ class LinkedInCrew:
         print("")
 
     def _initialize_tools(self):
-        """Initialize all tools used by agents."""
-        
-        # Web search tool
-        if os.environ.get("SERPER_API_KEY"):
-            try:
-                from crewai_tools import SerperDevTool
-                web_search_fn = SerperDevTool()
-                self.web_search_tool = FunctionTool.from_defaults(
-                    fn=lambda query: web_search_fn.run(query),
-                    name="web_search",
-                    description="Search the web for information on a given topic",
-                )
-            except ImportError:
-                custom_search = MyCustomDuckDuckGoTool()
-                self.web_search_tool = FunctionTool.from_defaults(
-                    fn=lambda query: custom_search.run(query),
-                    name="web_search",
-                    description="Search the web for information on a given topic",
-                )
-        else:
+        try:
             custom_search = MyCustomDuckDuckGoTool()
             self.web_search_tool = FunctionTool.from_defaults(
                 fn=lambda query: custom_search.run(query),
                 name="web_search",
                 description="Search the web for information on a given topic",
             )
+        except Exception as e:
+            print(f"Error in initializing tool: {e}")
 
         # File writer tool
         def write_file(filename: str, content: str) -> str:
@@ -625,18 +600,7 @@ class LinkedInCrew:
 
         # Scraper tool
         try:
-            from crewai_tools import ScrapeWebsiteTool
-            scraper = ScrapeWebsiteTool()
-            self.scraper_tool = FunctionTool.from_defaults(
-                fn=lambda url: scraper.run(url),
-                name="scrape_website",
-                description="Scrape content from a website URL",
-            )
-        except ImportError:
-            from bs4 import BeautifulSoup
-
             def simple_scraper(url: str) -> str:
-                """Simple web scraper fallback."""
                 try:
                     response = requests.get(url, timeout=10)
                     response.raise_for_status()
@@ -651,6 +615,8 @@ class LinkedInCrew:
                 name="scrape_website",
                 description="Scrape content from a website URL",
             )
+        except Exception as e:
+            print(f"Failed to run scraper: {e}")
 
         # Knowledge base tools (respect QDRANT_COLLECTION env)
         collection = os.getenv("QDRANT_COLLECTION", "linkedin_knowledge")
