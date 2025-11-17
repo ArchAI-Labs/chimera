@@ -42,12 +42,6 @@ def search_knowledge(
     return _mc.search_knowledge(query=query, top_k=top_k, collection_name=collection_name)
 
 
-# Module-level helper for env-driven chunking
-def _get_chunking_params(default_size: int = 512, default_overlap: int = 50) -> tuple[int, int]:
-    """Compatibility shim; delegates to MemoryConfig."""
-    return _mc.get_chunking_params(default_size, default_overlap)
-
-
 def document_exists(
     text: str,
     collection_name: str = os.getenv("QDRANT_COLLECTION", "linkedin_knowledge")

@@ -151,6 +151,8 @@ class MemoryConfig:
             collection_name=self.collection_name,
             enable_hybrid=True,
             fastembed_sparse_model=self.sparse_model,
+            dense_vector_name='text-dense', 
+            sparse_vector_name='text-sparse'
         )
 
         embed_model, _ = self._select_embedding_model()
