@@ -156,7 +156,6 @@ except ImportError:
                     return f"Error: DuckDuckGo search library not available for query: {query}"
                 try:
                     with DDGS() as ddg:
-                        # Fetch top results with title, link, and snippet if available
                         results = ddg.text(query, max_results=5)
                     lines = []
                     for i, item in enumerate(results or [], 1):
@@ -213,8 +212,6 @@ def ensure_utf8_path(p: Path) -> Path:
 def save_text_utf8(path: Path, text: str) -> Path:
     """
     Write text as UTF-8 with LF newlines. Handles emoji and special characters.
-    Never fails on encoding issues - replaces problematic characters if needed.
-    Works reliably on Windows by forcing UTF-8 encoding.
     """
     path = ensure_utf8_path(path)
     
@@ -249,28 +246,21 @@ def resolve_path(base_dir: Path, maybe_rel: str) -> Path:
     return p if p.is_absolute() else (base_dir / p)
 
 
-# Workflow Events
+# Simplified event structure
 class EditorialPlanEvent(Event):
     result: str
 
 
-class ContentGenerationEvent(Event):
-    result: str
-    content_type: str
-    editorial_plan: str
-
-
-class PostWritingEvent(Event):
-    result: str
-    editorial_plan: str
-    generated_content: str
+class LinkedInPostsEvent(Event):
+    """Posts are created with research included - no intermediate step"""
+    posts: str
+    research_notes: str
 
 
 class VisualsEvent(Event):
-    result: str
-    editorial_plan: str
-    generated_content: str
-    linkedin_posts: str
+    """Visual prompts ready for image generation"""
+    prompts: List[str]
+    concepts: str
 
 
 class AgentConfig:
@@ -338,7 +328,6 @@ class LinkedInCrew:
         self.inputs = inputs if inputs is not None else {}
         print(f"USER INPUTS RECEIVED: {self.inputs}")
 
-        # Setup output directory
         requested_out = self.inputs.get("output_dir")
         if requested_out:
             self.output_dir = Path(requested_out)
@@ -414,7 +403,6 @@ class LinkedInCrew:
             with open(config_path, "r", encoding="utf-8") as f:
                 raw_config = yaml.safe_load(f) or {}
             
-            # Determine if it's agents or tasks config
             if "agents.yaml" in config_path:
                 return {
                     name: AgentConfig(cfg) 
@@ -455,7 +443,6 @@ class LinkedInCrew:
             print("ℹ️ No PRODUCT_SITES provided; skipping ingestion.")
             return
 
-        # Parse comma-separated URLs, trim, and deduplicate
         urls = [u.strip() for u in sites_str.split(",") if u.strip()]
         if not urls:
             print("ℹ️ PRODUCT_SITES is empty after parsing; skipping ingestion.")
@@ -464,7 +451,6 @@ class LinkedInCrew:
         collection = os.getenv("QDRANT_COLLECTION", "linkedin_knowledge")
         print(f"🔎 Ingesting {len(urls)} product site(s) into Qdrant collection '{collection}'")
 
-        # Read chunking parameters from env (with defaults)
         try:
             chunk_size = int(os.getenv("CHUNK_SIZE", "512"))
         except Exception:
@@ -473,43 +459,35 @@ class LinkedInCrew:
             chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "50"))
         except Exception:
             chunk_overlap = 50
-        # Ensure sensible bounds: size >= 1, 0 <= overlap < size
         chunk_size = max(1, chunk_size)
         chunk_overlap = max(0, min(chunk_overlap, chunk_size - 1))
 
         for url in urls:
             try:
-                # Fetch content
                 resp = requests.get(url, timeout=20)
                 resp.raise_for_status()
                 content_type = resp.headers.get("Content-Type", "").lower()
 
                 text = ""
                 if "text/markdown" in content_type or url.endswith(".md") or "raw.githubusercontent.com" in url:
-                    # Treat as text/markdown
                     text = resp.text
                 elif "text/plain" in content_type:
                     text = resp.text
                 else:
-                    # HTML fallback: extract visible text
                     try:
                         soup = BeautifulSoup(resp.content, "html.parser")
                         text = soup.get_text(separator="\n", strip=True)
                     except Exception as parse_err:
-                        # Fallback to raw text
                         text = resp.text
                         print(f"⚠️ HTML parse error for {url}: {parse_err}. Using raw text.")
 
-                # Sanitize/limit extremely long content to avoid token blowups
                 if not text or len(text.strip()) < 50:
                     print(f"⚠️ Skipping {url}: content too short or empty")
                     continue
 
-                # Optional: clip to a reasonable length for indexing
                 max_chars = 50_000
                 clipped = text[:max_chars]
 
-                # Upsert into Qdrant with metadata and env-driven chunking
                 metadata = {"url": url, "source": url, "type": "product_site"}
                 result = upsert_knowledge(
                     clipped,
@@ -544,7 +522,6 @@ class LinkedInCrew:
         except Exception as e:
             print(f"⚠️  Web search tool: NOT WORKING ({str(e)[:50]})")
         
-        # Test knowledge base
         try:
             result = search_knowledge("test")
             self.tools_working["knowledge_base"] = True
@@ -565,7 +542,6 @@ class LinkedInCrew:
         except Exception as e:
             print(f"Error in initializing tool: {e}")
 
-        # File writer tool
         def write_file(filename: str, content: str) -> str:
             """Write content to file with UTF-8 encoding."""
             try:
@@ -583,7 +559,6 @@ class LinkedInCrew:
             description="Write content to a file with UTF-8 encoding"
         )
 
-        # DALL-E tool
         dalle = DallETool(model="dall-e-3", size="1024x1024", quality="standard", n=1)
         self.dalle_tool = FunctionTool.from_defaults(
             fn=lambda prompt: dalle.run(prompt),
@@ -591,14 +566,12 @@ class LinkedInCrew:
             description="Generate an image using DALL-E based on a text prompt",
         )
 
-        # Download image tool
         self.download_image_tool = FunctionTool.from_defaults(
             fn=download_image_tool,
             name="download_image",
             description="Download an image from a URL",
         )
 
-        # Scraper tool
         try:
             def simple_scraper(url: str) -> str:
                 try:
@@ -618,7 +591,6 @@ class LinkedInCrew:
         except Exception as e:
             print(f"Failed to run scraper: {e}")
 
-        # Knowledge base tools (respect QDRANT_COLLECTION env)
         collection = os.getenv("QDRANT_COLLECTION", "linkedin_knowledge")
         self.search_knowledge_tool = FunctionTool.from_defaults(
             fn=lambda query: search_knowledge(query, collection_name=collection),
@@ -635,7 +607,6 @@ class LinkedInCrew:
         """Initialize all ReAct agents with configurations from YAML."""
         self.agents = {}
 
-        # Generalist Expert Agent
         agent_config = self.agents_config.get("generalist_expert")
         if agent_config:
             print(f"✅ Initializing Generalist Expert with config: {agent_config}")
@@ -652,7 +623,6 @@ class LinkedInCrew:
             verbose=True,
         )
 
-        # Product Expert Agent
         agent_config = self.agents_config.get("product_expert")
         if agent_config:
             print(f"✅ Initializing Product Expert with config: {agent_config}")
@@ -673,7 +643,6 @@ class LinkedInCrew:
             verbose=True,
         )
 
-        # Designer Agent
         agent_config = self.agents_config.get("designer")
         if agent_config:
             print(f"✅ Initializing Designer with config: {agent_config}")
@@ -690,7 +659,6 @@ class LinkedInCrew:
             verbose=True,
         )
 
-        # Planner Agent
         agent_config = self.agents_config.get("planner")
         if agent_config:
             print(f"✅ Initializing Planner with config: {agent_config}")
@@ -751,7 +719,7 @@ class LinkedInCrew:
 
 
 class LinkedInWorkflow(Workflow):
-    """Workflow for creating LinkedIn content with YAML-driven configuration."""
+    """Streamlined workflow with reduced redundancy."""
     
     def __init__(self, agents: Dict[str, ReActAgent], llm, manager_llm,
                  inputs: Dict[str, Any], tools_working: Dict[str, bool], **kwargs):
@@ -765,15 +733,11 @@ class LinkedInWorkflow(Workflow):
         self.workflow_data = {}
         self.output_dir = Path(self.inputs.get("output_dir", "output"))
         
-        # Store configs
         self.agents_config: Dict[str, AgentConfig] = inputs.get("agents_config", {})
         self.tasks_config: Dict[str, TaskConfig] = inputs.get("tasks_config", {})
 
     def _get_agent_prompt(self, agent_name: str, task_context: str) -> str:
-        """
-        Build a complete prompt combining agent config and task context.
-        This is the key method that uses YAML configurations.
-        """
+        """Build a complete prompt combining agent config and task context."""
         agent_config = self.agents_config.get(agent_name)
         
         if agent_config:
@@ -801,29 +765,22 @@ class LinkedInWorkflow(Workflow):
         result = str(response.message.content)
         
         print(f"✅ LLM Response length: {len(result)} characters")
-        print(f"📄 Preview: {result[:200]}...")
         return result
 
     async def _ask_agent(self, agent_name: str, prompt: str, 
                         max_iterations: Optional[int] = None) -> str:
-        """
-        Call an agent with its configuration-based prompt.
-        Automatically includes agent's role, goal, and backstory from YAML.
-        """
+        """Call an agent with its configuration-based prompt."""
         agent = self.agents.get(agent_name)
         if not agent:
             raise ValueError(f"Agent '{agent_name}' not found")
         
-        # Build the full prompt with agent context
         full_prompt = self._get_agent_prompt(agent_name, prompt)
         
-        # Get max_iterations from config if not specified
         if max_iterations is None:
             agent_config = self.agents_config.get(agent_name)
             max_iterations = agent_config.max_iterations if agent_config else 15
         
         print(f"\n🔧 Calling {agent_name} (max_iterations={max_iterations})...")
-        print(f"📝 Prompt includes agent config: {agent_name in self.agents_config}")
         
         try:
             if hasattr(agent, "run"):
@@ -851,399 +808,378 @@ class LinkedInWorkflow(Workflow):
 
     @step
     async def editorial_plan(self, ctx: Context, ev: StartEvent) -> EditorialPlanEvent:
-        """Step 1: Create editorial plan using task configuration."""
+        """Step 1: Create concise editorial strategy (not detailed content)."""
         print("\n" + "="*60)
-        print("=== STEP 1: Editorial Planning ===")
+        print("=== STEP 1: Editorial Strategy ===")
         print("="*60)
 
         topic = self.inputs.get("topic", "AI and Technology")
         num_posts = self.inputs.get("num_posts", 5)
         frequency = self.inputs.get("frequency", "weekly")
 
-        # Build prompt from task config if available
-        task_config = self.tasks_config.get("editorial_plan")
-        if task_config:
-            base_context = f"""Topic: {topic}
-Number of posts: {num_posts}
-Frequency: {frequency}"""
-            prompt = self._get_task_prompt("editorial_plan", base_context)
-            print("✅ Using task configuration for editorial planning")
-        else:
-            prompt = f"""You are an expert content strategist. Create an editorial plan for {num_posts} LinkedIn posts about {topic}.
-The posts should be published {frequency}.
+        prompt = f"""Create a comprehensive editorial strategy for {num_posts} LinkedIn posts about {topic}, published {frequency}.
 
-Include:
-1. Post topics and angles
-2. Key messages for each post
-3. Target audience considerations
-4. Content mix (educational, promotional, thought leadership)
+        Provide a detailed strategic plan (400-600 words) covering:
 
-Provide a detailed, structured editorial plan."""
-            print("⚠️  No task config found, using default prompt")
+        1. CONTENT THEMES ({num_posts} posts):
+        - Post 1: [Specific angle/topic] - [Why this matters to audience]
+        - Post 2: [Specific angle/topic] - [Why this matters to audience]
+        - (Continue for all {num_posts} posts)
+
+        2. TARGET AUDIENCE ANALYSIS:
+        - Primary audience: [Role, industry, pain points]
+        - Secondary audience: [Who else will benefit]
+        - Audience interests and needs
+
+        3. CONTENT STRATEGY:
+        - Content mix breakdown (e.g., 40% educational, 30% thought leadership, 30% promotional)
+        - Tone and voice guidelines
+        - Key messages to emphasize
+        - Engagement tactics
+
+        4. HASHTAG STRATEGY:
+        - 3-5 primary hashtags with reasoning
+        - Post-specific hashtag suggestions
+        
+        5. SUCCESS METRICS:
+        - What defines success for this campaign
+        - Key engagement indicators to track
+
+        Make it strategic and actionable."""
 
         result = await self._call_llm(self.manager_llm, prompt)
 
         self.workflow_data["editorial_plan"] = result
-        print(f"\n✅ Editorial plan created: {len(result)} characters")
+        print(f"\n✅ Editorial strategy created: {len(result)} characters")
         
-        save_text_utf8(self.output_dir / "editorial_plan.md", result)
+        # Only save strategy, not detailed content
+        save_text_utf8(self.output_dir / "1_editorial_strategy.md", result)
         
         return EditorialPlanEvent(result=result)
 
     @step
-    async def content_generation(self, ctx: Context, ev: EditorialPlanEvent) -> ContentGenerationEvent:
-        """Step 2: Generate content using appropriate expert agent with YAML config."""
+    async def create_posts_with_research(self, ctx: Context, ev: EditorialPlanEvent) -> LinkedInPostsEvent:
+        """Step 2: Research AND write posts in one step - no intermediate files."""
         print("\n" + "="*60)
-        print("=== STEP 2: Content Generation ===")
+        print("=== STEP 2: Research & Write LinkedIn Posts ===")
         print("="*60)
 
         editorial_plan = ev.result
         topic = self.inputs.get("topic", "AI and Technology")
+        num_posts = self.inputs.get("num_posts", 5)
 
-        # Build task context
-        task_context = f"""Based on this editorial plan, generate detailed content about {topic}.
+        # Combine research and writing in ONE step
+        task_context = f"""You MUST create EXACTLY {num_posts} LinkedIn posts. No more, no less.
 
-Editorial Plan:
+Using this editorial strategy, research AND write {num_posts} complete LinkedIn posts about {topic}.
+
+Editorial Strategy:
 {editorial_plan}
 
-Your task:
+CRITICAL REQUIREMENT: Create EXACTLY {num_posts} posts numbered 1 through {num_posts}.
+
+YOUR TASK:
+1. For each post angle in the strategy:
+   - Research current info {"(use web_search tool)" if self.tools_working.get("web_search") else ""}{"(use search_knowledge tool)" if self.tools_working.get("knowledge_base") and self.expert_type == "prodotto" else ""}
+   - Write a complete, ready-to-publish LinkedIn post
+   
+2. Each post should be:
+   - 1800-2500 characters (aim for longer, more substantive posts)
+   - Start with a scroll-stopping hook that makes people stop scrolling
+   - Include 3-4 main body paragraphs with valuable insights
+   - Short paragraphs (2-3 sentences max per paragraph)
+   - Include 2-3 strategic emojis throughout
+   - Add specific examples, stats, or stories to illustrate points
+   - End with clear, actionable CTA
+   - Include 3-5 relevant hashtags at the end
+   - Use line breaks for readability
+
+OUTPUT FORMAT (YOU MUST CREATE {num_posts} POSTS):
+=== POST 1: [Title/Topic] ===
+[Complete post text here including emojis and line breaks]
+
+Hashtags: #hashtag1 #hashtag2 #hashtag3
+
+RESEARCH SOURCES:
+- Key insight 1: [specific data point or trend used]
+- Key insight 2: [another source or statistic referenced]
+---
+
+=== POST 2: [Title/Topic] ===
+[Complete post text here including emojis and line breaks]
+
+Hashtags: #hashtag1 #hashtag2 #hashtag3
+
+RESEARCH SOURCES:
+- Key insight 1: [specific data point or trend used]
+- Key insight 2: [another source or statistic referenced]
+---
+
+=== POST 3: [Title/Topic] ===
+[Continue same format...]
+---
+
+REPEAT THIS FORMAT UNTIL YOU HAVE {num_posts} POSTS TOTAL.
+
+VERIFICATION: After writing, count your posts. You should have EXACTLY {num_posts} posts numbered 1 through {num_posts}.
+
+IMPORTANT: Include clear "RESEARCH SOURCES:" section for each post."""
+
+        if self.expert_type == "generalista" and self.tools_working.get("web_search"):
+            result = await self._ask_agent("generalist_expert", task_context)
+        elif self.expert_type == "prodotto" and self.tools_working.get("knowledge_base"):
+            result = await self._ask_agent("product_expert", task_context)
+        else:
+            result = await self._call_llm(self.llm, task_context)
+        
+        posts_clean = []
+        research_notes = []
+
+        sections = result.split("=== POST")
+        for section in sections[1:]:
+            if "RESEARCH SOURCES:" in section:
+                parts = section.split("RESEARCH SOURCES:")
+                posts_clean.append("=== POST" + parts[0].strip())
+                if len(parts) > 1:
+                    research_notes.append(parts[1].split("---")[0].strip())
+            else:
+                posts_clean.append("=== POST" + section.strip())
+
+        # Validate we have the correct number of posts
+        if len(posts_clean) != num_posts:
+            print(f"⚠️  Warning: Expected {num_posts} posts but got {len(posts_clean)}. Adjusting...")
+            
+            if len(posts_clean) < num_posts:
+                # Not enough posts - pad with placeholders
+                for i in range(len(posts_clean), num_posts):
+                    posts_clean.append(f"=== POST {i+1}: Additional Post Needed ===\n[Post content to be created]\n\nHashtags: #topic")
+            elif len(posts_clean) > num_posts:
+                # Too many posts - truncate
+                posts_clean = posts_clean[:num_posts]
+                research_notes = research_notes[:num_posts]
+
+        posts_only = "\n\n".join(posts_clean)
+        research_summary = "\n\n".join(f"POST {i+1} SOURCES:\n{note}" for i, note in enumerate(research_notes))
+
+        self.workflow_data["posts"] = posts_only
+        self.workflow_data["research"] = research_summary
+
+        print(f"\n✅ Created {len(posts_clean)} posts with research")
+
+        # Save posts cleanly
+        save_text_utf8(self.output_dir / "2_linkedin_posts.md", posts_only)
+        
+        if research_summary:
+            save_text_utf8(self.output_dir / "2_research_notes.txt", 
+                          f"Research notes from post creation:\n\n{research_summary}")
+        
+        return LinkedInPostsEvent(posts=posts_only, research_notes=research_summary)
+
+    @step
+    async def create_visual_prompts(self, ctx: Context, ev: LinkedInPostsEvent) -> VisualsEvent:
+        """Step 3: Generate actionable DALL-E prompts (not just concepts)."""
+        print("\n" + "="*60)
+        print("=== STEP 3: Generate Visual Prompts ===")
+        print("="*60)
+
+        posts = ev.posts
+        num_posts = self.inputs.get("num_posts", 5)
+
+        task_context = f"""Based on these LinkedIn posts, create EXACTLY {num_posts} READY-TO-USE DALL-E prompts for image generation.
+
+        Posts:
+        {posts[:2000]}...
+
+        CRITICAL: You MUST create EXACTLY {num_posts} DALL-E prompts, one for each post.
+
+        For each post, create a detailed DALL-E prompt that can be used immediately.
+
+        DALLE PROMPT REQUIREMENTS:
+        - Be specific and detailed (describe exactly what to show)
+        - Include style (e.g., "minimalist flat design", "professional 3D render")
+        - Specify colors (e.g., "blue and white color scheme")
+        - No text in images
+        - Professional and clean
+        - LinkedIn-appropriate
+
+        OUTPUT FORMAT (MUST HAVE {num_posts} PROMPTS):
+        === POST 1 DALLE PROMPT ===
+        [Complete, detailed DALL-E prompt ready to use]
+
+        === POST 2 DALLE PROMPT ===
+        [Complete, detailed DALL-E prompt ready to use]
+
+        === POST 3 DALLE PROMPT ===
+        [Complete, detailed DALL-E prompt ready to use]
+
+        CONTINUE THIS FORMAT FOR ALL {num_posts} POSTS.
+
+        VERIFICATION: Count your prompts. You should have EXACTLY {num_posts} prompts numbered 1 through {num_posts}."""
+
+        result = await self._call_llm(self.llm, task_context)
+        prompts = []
+        sections = result.split("=== POST")
+        for section in sections[1:]:
+            prompt_text = section.split("DALLE PROMPT ===")[1].strip() if "DALLE PROMPT ===" in section else section.strip()
+            prompt_text = prompt_text.split("===")[0].strip()
+            if prompt_text:
+                prompts.append(prompt_text)
+
+        if len(prompts) != num_posts:
+            print(f"⚠️  Warning: Expected {num_posts} prompts but got {len(prompts)}. Adjusting...")
+            
+            if len(prompts) < num_posts:
+                for i in range(len(prompts), num_posts):
+                    prompts.append(f"Professional LinkedIn post illustration for post {i+1}, minimalist design, blue and white color scheme, clean and modern")
+            elif len(prompts) > num_posts:
+                prompts = prompts[:num_posts]
+
+        self.workflow_data["visual_prompts"] = prompts
+
+        print(f"\n✅ Created {len(prompts)} visual prompts")
+
+        prompts_text = "\n\n".join(f"POST {i+1} IMAGE PROMPT:\n{p}" for i, p in enumerate(prompts))
+        save_text_utf8(self.output_dir / "3_dalle_prompts.txt", prompts_text)
+        
+        return VisualsEvent(prompts=prompts, concepts=result)
+
+    @step
+    async def create_content_calendar(self, ctx: Context, ev: VisualsEvent) -> StopEvent:
+        """Step 4: Create publishing calendar ONLY (no content repetition)."""
+        print("\n" + "="*60)
+        print("=== STEP 4: Content Calendar ===")
+        print("="*60)
+
+        topic = self.inputs.get("topic", "AI and Technology")
+        num_posts = self.inputs.get("num_posts", 5)
+        frequency = self.inputs.get("frequency", "weekly")
+        
+        # Get the posts and prompts
+        posts = self.workflow_data.get("posts", "")
+        prompts = ev.prompts
+
+        post_titles = []
+        post_sections = posts.split("=== POST")
+        for section in post_sections[1:]:  # Skip empty first section
+            lines = section.strip().split("\n")
+            if lines:
+                title_line = lines[0].replace(":", "").strip()
+                # Remove any numbering
+                title_clean = title_line.split("===")[0].strip()
+                post_titles.append(title_clean)
+
+        # Ensure we have exactly num_posts titles
+        while len(post_titles) < num_posts:
+            post_titles.append(f"LinkedIn Post {len(post_titles) + 1}")
+        if len(post_titles) > num_posts:
+            post_titles = post_titles[:num_posts]
+
+        titles_list = "\n".join([f"{i+1}. {title}" for i, title in enumerate(post_titles)])
+
+        calendar_prompt = f"""Create a LinkedIn publishing calendar for EXACTLY {num_posts} posts about {topic}, published {frequency}.
+
+        CRITICAL: You MUST create calendar entries for ALL {num_posts} posts. No more, no less.
+
+        Post titles:
+        {titles_list}
+
+        Create a clear, readable calendar in this format:
+
+        ## POST 1: {post_titles[0] if post_titles else "Post 1"}
+        **Publishing Date:** [Calculate from next Monday, based on {frequency}]
+        **Posting Time:** [Best time for LinkedIn, e.g., 8:00 AM or 12:00 PM]
+        **Visual Asset:** DALL-E Prompt #1 (see 3_dalle_prompts.txt)
+        **Target Metrics:** 
+        - Impressions: [target number]
+        - Engagement rate: [target %]
+        - Comments: [target number]
+
+        ---
+
+        ## POST 2: {post_titles[1] if len(post_titles) > 1 else "Post 2"}
+        **Publishing Date:** [Next date based on {frequency}]
+        **Posting Time:** [Best time]
+        **Visual Asset:** DALL-E Prompt #2 (see 3_dalle_prompts.txt)
+        **Target Metrics:**
+        - Impressions: [target number]
+        - Engagement rate: [target %]
+        - Comments: [target number]
+
+        ---
+
+        {''.join([f"""
+        ## POST {i+1}: {post_titles[i] if i < len(post_titles) else f"Post {i+1}"}
+        **Publishing Date:** [Next date based on {frequency}]
+        **Posting Time:** [Best time]
+        **Visual Asset:** DALL-E Prompt #{i+1} (see 3_dalle_prompts.txt)
+        **Target Metrics:**
+        - Impressions: [target number]
+        - Engagement rate: [target %]
+        - Comments: [target number]
+
+        ---
+        """ for i in range(2, num_posts)])}
+
+        VERIFICATION: Count your calendar entries. You should have EXACTLY {num_posts} entries numbered 1 through {num_posts}.
+
+        CRITICAL: Include ALL {num_posts} posts in the calendar!"""
+
+        calendar = await self._call_llm(self.llm, calendar_prompt)
+
+        final_output = f"""# LinkedIn Content Calendar - {topic}
+
+## Publishing Schedule
+
+{calendar}
+
+---
+
+## Files Generated
+
+1. **1_editorial_strategy.md** - High-level content strategy
+2. **2_linkedin_posts.md** - {num_posts} ready-to-publish posts
+3. **2_research_notes.txt** - Research insights used
+4. **3_dalle_prompts.txt** - {len(prompts)} image generation prompts
+5. **4_content_calendar.md** - This publishing schedule
+
+---
+
+## Next Steps
+
+1. Review and customize posts in `2_linkedin_posts.md`
+2. Generate images using prompts in `3_dalle_prompts.txt`
+3. Follow the publishing schedule above
+4. Track metrics: engagement rate, reach, clicks, comments
+
+---
+
+## Quick Stats
+
+- Total posts: {num_posts}
+- Publishing frequency: {frequency}
+- Content type: {"Technical/General" if self.expert_type == "generalista" else "Product-focused"}
+- Tools used: {"Web search, " if self.tools_working.get("web_search") else ""}{"Knowledge base, " if self.tools_working.get("knowledge_base") else ""}LLM generation
 """
 
-        if self.expert_type == "generalista":
-            if self.tools_working.get("web_search"):
-                print("✅ Using Generalist Expert with web search and YAML config...")
-                
-                task_config = self.tasks_config.get("technical_content")
-                if task_config:
-                    task_context = self._get_task_prompt("technical_content", f"Editorial Plan:\n{editorial_plan}\n\nTopic: {topic}")
-                    print("✅ Using technical_content task config")
-                else:
-                    task_context += """1. Use the web_search tool to find current information
-        2. Generate comprehensive technical content covering:
-        - Industry trends and insights
-        - Technical explanations
-        - Best practices
-        - Real-world applications
-
-        Search for recent information and incorporate it into your response.
-        Format the output as structured, detailed content ready to be transformed into LinkedIn posts."""
-                
-                result = await self._ask_agent("generalist_expert", task_context)
-                content_type = "technical_with_search"
-            else:
-                print("⚠️  Web search not working - using direct LLM...")
-                prompt = self._get_agent_prompt("generalist_expert", task_context + """
-Generate comprehensive content covering:
-- Industry trends and insights
-- Technical explanations
-- Best practices
-- Real-world applications
-- Examples and case studies
-
-Make it substantive and valuable - at least 500 words of quality content.""")
-                result = await self._call_llm(self.llm, prompt)
-                content_type = "technical_direct"
-
-        elif self.expert_type == "prodotto":
-            if self.tools_working.get("knowledge_base"):
-                print("✅ Using Product Expert with knowledge base and YAML config...")
-                
-                task_config = self.tasks_config.get("product_content")
-                if task_config:
-                    task_context = self._get_task_prompt("product_content", f"Editorial Plan:\n{editorial_plan}\n\nTopic: {topic}")
-                    print("✅ Using product_content task config")
-                else:
-                    task_context += """1. Use the search_knowledge tool to find relevant product information
-        2. Generate product-focused content covering:
-        - Product features and benefits
-        - Use cases and success stories
-        - Competitive advantages
-        - Customer pain points and solutions
-
-        Format the output as structured content ready for LinkedIn posts."""
-                
-                result = await self._ask_agent("product_expert", task_context)
-                content_type = "product_with_kb"
-            else:
-                print("⚠️  Knowledge base not working - using direct LLM...")
-                prompt = self._get_agent_prompt("product_expert", task_context + """
-Generate comprehensive content covering:
-- Product features and benefits
-- Use cases and success stories
-- Competitive advantages
-- Customer pain points and solutions
-- Examples and case studies
-
-Make it substantive and valuable - at least 500 words of quality content.""")
-                result = await self._call_llm(self.llm, prompt)
-                content_type = "product_direct"
-        else:
-            print("⚠️  Using direct LLM (no expert type specified)...")
-            prompt = task_context + """
-Generate comprehensive content covering:
-- Industry trends and insights
-- Technical explanations
-- Best practices
-- Real-world applications
-- Examples and case studies
-
-Make it substantive and valuable - at least 500 words of quality content."""
-            result = await self._call_llm(self.llm, prompt)
-            content_type = "general"
-
-        self.workflow_data["generated_content"] = result
-        print(f"\n✅ Content generated ({content_type}): {len(result)} characters")
+        save_text_utf8(self.output_dir / "4_content_calendar.md", final_output)
         
-        save_text_utf8(self.output_dir / "generated_content.md", result)
-        
-        return ContentGenerationEvent(
-            result=result, 
-            content_type=content_type,
-            editorial_plan=editorial_plan
-        )
-
-    @step
-    async def write_linkedin_post(self, ctx: Context, ev: ContentGenerationEvent) -> PostWritingEvent:
-        """Step 3: Transform content into LinkedIn posts."""
+        print(f"\n✅ Content calendar created")
         print("\n" + "="*60)
-        print("=== STEP 3: Writing LinkedIn Posts ===")
+        print("✅ Workflow Complete!")
         print("="*60)
-
-        content = ev.result
-        editorial_plan = ev.editorial_plan
-        num_posts = self.inputs.get('num_posts', 5)
-
-        # Use task config if available
-        task_config = self.tasks_config.get("linkedin_post")
-        if task_config:
-            context = f"""Editorial Plan:
-{editorial_plan[:500]}...
-
-Generated Content:
-{content}
-
-Number of posts to create: {num_posts}"""
-            prompt = self._get_task_prompt("write_posts", context)
-            print("✅ Using task configuration for post writing")
-        else:
-            prompt = f"""You are an expert LinkedIn copywriter. Transform this content into {num_posts} engaging, ready-to-publish LinkedIn posts.
-
-Editorial Plan:
-{editorial_plan[:500]}...
-
-Generated Content:
-{content}
-
-Create {num_posts} separate LinkedIn posts, each one should:
-- Start with a compelling hook in the first line
-- Use short paragraphs (2-3 sentences max)
-- Include 3-5 relevant hashtags at the end
-- Have a clear call-to-action
-- Be between 150-300 words
-- Use emojis strategically (1-2 per post)
-- Tell a story or provide unique value
-
-Format as:
-
-=== POST 1 ===
-[First post content here]
-[hashtags]
-
-=== POST 2 ===
-[Second post content here]
-[hashtags]
-
-And so on..."""
-
-        result = await self._call_llm(self.llm, prompt)
-
-        self.workflow_data["linkedin_posts"] = result
-        print(f"\n✅ LinkedIn posts written: {len(result)} characters")
-        
-        posts_dir = self.output_dir / "posts"
-        posts_dir.mkdir(exist_ok=True)
-        save_text_utf8(posts_dir / "linkedin_posts.md", result)
-        
-        return PostWritingEvent(
-            result=result,
-            editorial_plan=editorial_plan,
-            generated_content=content
-        )
-
-    @step
-    async def create_visuals(self, ctx: Context, ev: PostWritingEvent) -> VisualsEvent:
-        """Step 4: Create visual concepts using Designer agent with YAML config."""
-        print("\n" + "="*60)
-        print("=== STEP 4: Creating Visual Assets ===")
-        print("="*60)
-
-        posts = ev.result
-
-        # Use designer agent with its config
-        posts = ev.result
-
-        # Use task config if available
-        task_config = self.tasks_config.get("visuals")
-        if task_config:
-            task_context = self._get_task_prompt("visuals", f"LinkedIn Posts:\n{posts[:1000]}")
-            print("✅ Using visuals task config")
-        else:
-            task_context = f"""Based on these LinkedIn posts, create detailed visual design concepts.
-
-    LinkedIn Posts:
-    {posts[:1000]}
-
-    For each post, provide:
-    1. Visual concept description (what the image should show)
-    2. Color scheme (primary and secondary colors)
-    3. Design style (minimalist, bold, professional, etc.)
-    4. Key visual elements to include
-    5. Text overlay suggestions (if any)
-
-    Format as:
-
-    === VISUAL 1 ===
-    Concept: [description]
-    Colors: [color scheme]
-    Style: [style]
-    Elements: [key elements]
-
-    === VISUAL 2 ===
-    [and so on...]"""
-
-        # Check if we should use the designer agent or direct LLM
-        agent_config = self.agents_config.get("designer")
-        if agent_config:
-            print("✅ Using Designer agent with YAML config")
-            result = await self._ask_agent("designer", task_context)
-        else:
-            print("⚠️  No designer config, using direct LLM")
-            result = await self._call_llm(self.llm, task_context)
-
-        self.workflow_data["visuals"] = result
-        print(f"\n✅ Visual concepts created: {len(result)} characters")
-        
-        images_dir = self.output_dir / "images"
-        images_dir.mkdir(exist_ok=True)
-        save_text_utf8(images_dir / "visuals_info.md", result)
-        
-        return VisualsEvent(
-            result=result,
-            editorial_plan=ev.editorial_plan,
-            generated_content=ev.generated_content,
-            linkedin_posts=posts
-        )
-
-    @step
-    async def plan_posts(self, ctx: Context, ev: VisualsEvent) -> StopEvent:
-        """Step 5: Create final content plan using Planner agent."""
-        print("\n" + "="*60)
-        print("=== STEP 5: Final Planning ===")
-        print("="*60)
-
-        editorial_plan = ev.editorial_plan
-        content = ev.generated_content
-        posts = ev.linkedin_posts
-        visuals = ev.result
-        task_config = self.tasks_config.get("plan_posts")
-        if task_config:
-            print("✅ Using plan_posts task config")
-            # The task config describes what to do, we still build the actual content
-        else:
-            print("⚠️ No plan_posts task config found")
-
-        # Use planner agent to create the final plan
-        task_context = f"""Create a comprehensive LinkedIn content calendar and execution plan.
-
-    Editorial Plan:
-    {editorial_plan[:500]}...
-
-    Generated Content Summary:
-    {content[:500]}...
-
-    LinkedIn Posts:
-    {posts}
-
-    Visual Assets:
-    {visuals[:500]}...
-
-    Create a final content calendar that includes:
-    - Publishing schedule with specific dates
-    - Each post with its visual asset reference
-    - Hashtag strategy
-    - Optimal posting times
-    - Performance tracking metrics
-    - Engagement strategy
-    - Success criteria
-
-    Topic: {self.inputs.get('topic', 'AI and Technology')}
-    Frequency: {self.inputs.get('frequency', 'weekly')}
-    Number of posts: {self.inputs.get('num_posts', 5)}
-
-    Format as a comprehensive markdown document."""
-
-        # Check if we should use planner agent
-        agent_config = self.agents_config.get("planner")
-        if agent_config:
-            print("✅ Using Planner agent with YAML config")
-            final_plan = await self._ask_agent("planner", task_context)
-        else:
-            print("⚠️ No planner config, using direct LLM")
-            final_plan = await self._call_llm(self.llm, task_context)
-
-        try:
-            save_text_utf8(self.output_dir / "final_content_plan.md", final_plan)
-            save_text_utf8(self.output_dir / "linkedin_content_plan.md", final_plan)
-            print(f"✅ Saved content plan ({len(final_plan)} characters)")
-            result_msg = f"Successfully saved content plan with {len(final_plan)} characters"
-        except Exception as e:
-            print(f"❌ Error saving file: {str(e)}")
-            result_msg = f"Error saving file: {str(e)}"
-
-        print("\n" + "="*60)
-        print("✅ Content planning complete!")
-        print("="*60)
+        print(f"\nGenerated files:")
+        print(f"  1. 1_editorial_strategy.md - Strategic overview")
+        print(f"  2. 2_linkedin_posts.md - {num_posts} ready posts")
+        print(f"  3. 2_research_notes.txt - Research references")
+        print(f"  4. 3_dalle_prompts.txt - Image generation prompts")
+        print(f"  5. 4_content_calendar.md - Publishing schedule")
         
         return StopEvent(
             result={
                 "status": "success",
-                "editorial_plan": editorial_plan,
-                "generated_content": content,
-                "linkedin_posts": posts,
-                "visuals": visuals,
-                "final_plan": result_msg,
                 "output_directory": str(self.output_dir),
+                "files_generated": 5,
+                "posts_created": num_posts,
+                "prompts_created": len(prompts)
             }
         )
-
-    def _test_tools(self):
-        """Test which tools are working properly."""
-        self.tools_working = {
-            "web_search": False,
-            "file_writer": True,
-            "knowledge_base": False,
-        }
-        
-        print("\n🔧 Testing tools...")
-        
-        # Test web search
-        try:
-            custom_search = MyCustomDuckDuckGoTool()
-            result = custom_search.run("site:duckduckgo.com test")
-            if result and isinstance(result, str) and len(result) > 10 and "Error" not in result:
-                self.tools_working["web_search"] = True
-                print("✅ Web search tool: WORKING")
-            else:
-                print("⚠️  Web search tool: NOT WORKING (empty or error)")
-        except Exception as e:
-            print(f"⚠️  Web search tool: NOT WORKING ({str(e)[:50]})")
-        
-        # Test knowledge base
-        try:
-            result = search_knowledge("test")
-            self.tools_working["knowledge_base"] = True
-            print("✅ Knowledge base: WORKING")
-        except Exception as e:
-            print(f"⚠️  Knowledge base: NOT WORKING ({str(e)[:50]})")
-        
-        print("")

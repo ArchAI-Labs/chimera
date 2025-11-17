@@ -18,7 +18,14 @@ except (AttributeError, OSError):
 from datetime import datetime
 from pathlib import Path
 import asyncio
+import json
+import re
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
+from llama_index.core.llms import ChatMessage
+from llama_index.llms.ollama import Ollama
+from llama_index.llms.openai import OpenAI
+from llama_index.llms.anthropic import Anthropic
 
 load_dotenv()
 
@@ -27,89 +34,205 @@ sys.path.append(str(Path(__file__).parent))
 from crew_llamaindex import LinkedInCrew
 
 
-def create_output_directory(base_path: str = "output") -> str:
-    """
-    Create timestamped output directory
+def get_llm():
+    provider = os.getenv("PROVIDER", "").lower()
+    model = os.getenv("MODEL")
     
-    Args:
-        base_path: Base directory for outputs
+    if provider == "ollama":
+        return Ollama(model=model, request_timeout=120.0)
+    elif provider == "openai":
+        return OpenAI(model=model)
+    elif provider == "anthropic":
+        return Anthropic(model=model)
+    else:
+        return Ollama(model="llama3", request_timeout=120.0)
+
+
+def extract_info_with_llm(user_input: str, collected: dict, llm) -> dict:
+    """Use LLM to extract information from user input in a single call."""
+    
+    system_prompt = f"""You are extracting information for a LinkedIn content pipeline.
+
+Current state:
+- expert_type: {collected['expert_type']} (need: "generalista" or "prodotto")
+- topic: {collected['topic']} (need: string)
+- num_posts: {collected['num_posts']} (need: integer)
+- frequency: {collected['frequency']} (need: "daily", "weekly", "bi-weekly", or "monthly")
+
+Extract any NEW information from the user's message. Map keywords:
+- "general", "technical", "generalista" → "generalista"
+- "product", "prodotto" → "prodotto"
+- For topics: extract the main subject
+- For numbers: extract integers
+- For frequency: "daily", "weekly", "bi-weekly", "monthly"
+
+Return ONLY valid JSON:
+{{
+  "expert_type": null or "generalista" or "prodotto",
+  "topic": null or "string",
+  "num_posts": null or integer,
+  "frequency": null or "daily"/"weekly"/"bi-weekly"/"monthly"
+}}
+
+If nothing can be extracted, return all nulls."""
+
+    messages = [
+        ChatMessage(role="system", content=system_prompt),
+        ChatMessage(role="user", content=user_input)
+    ]
+    
+    try:
+        response = llm.chat(messages)
+        response_text = response.message.content.strip()
         
-    Returns:
-        Path to created directory
-    """
+        # Extract JSON
+        if "```json" in response_text:
+            start = response_text.find("```json") + 7
+            end = response_text.find("```", start)
+            json_str = response_text[start:end].strip()
+        elif "{" in response_text:
+            start = response_text.find("{")
+            end = response_text.rfind("}") + 1
+            json_str = response_text[start:end]
+        else:
+            return {}
+        
+        extracted = json.loads(json_str)
+        return extracted
+        
+    except Exception as e:
+        print(f"[Debug: Extraction failed - {e}]")
+        return {}
+
+
+def get_user_inputs() -> dict:
+    
+    print("\n" + "="*60)
+    print("LinkedIn Content Creation Pipeline")
+    print("="*60)
+    print("\n👋 Hi! I'm your LinkedIn content assistant.")
+    print("\nI need to collect:")
+    print("  • Expert type (General/Technical or Product-focused)")
+    print("  • Content topic")
+    print("  • Number of posts")
+    print("  • Posting frequency")
+    print("\nFeel free to tell me everything at once or step by step!\n")
+    
+    llm = get_llm()
+    
+    collected = {
+        "expert_type": None,
+        "topic": None,
+        "num_posts": None,
+        "frequency": None
+    }
+    
+    # Conversation history for context
+    conversation = []
+    
+    max_turns = 10
+    turn = 0
+    
+    while turn < max_turns:
+        # Check if we have everything
+        if all(v is not None for v in collected.values()):
+            break
+        
+        # Ask for input
+        if turn == 0:
+            prompt = "You: "
+        else:
+            # Determine what to ask for
+            missing = [k for k, v in collected.items() if v is None]
+            if missing:
+                field_names = {
+                    "expert_type": "expert type (generalista or prodotto)",
+                    "topic": "topic",
+                    "num_posts": "number of posts",
+                    "frequency": "posting frequency (daily/weekly/bi-weekly/monthly)"
+                }
+                print(f"\nI still need: {field_names[missing[0]]}")
+                prompt = "You: "
+            else:
+                prompt = "You: "
+        
+        user_input = input(prompt).strip()
+        
+        if not user_input:
+            print("Please provide some information.\n")
+            continue
+        
+        conversation.append(user_input)
+        
+        extracted = extract_info_with_llm(user_input, collected, llm)
+        
+        updated_fields = []
+        for key, value in extracted.items():
+            if value is not None and key in collected and collected[key] is None:
+                collected[key] = value
+                updated_fields.append(f"{key}: {value}")
+        
+        if updated_fields:
+            for field in updated_fields:
+                print(f"  ✓ Got {field}")
+        else:
+            print("  (Couldn't extract specific info from that)")
+        
+        turn += 1
+    
+    if collected["expert_type"] is None:
+        print("\n⚠️  Expert type not specified, using default: generalista")
+        collected["expert_type"] = "generalista"
+    
+    if collected["topic"] is None:
+        print("⚠️  Topic not specified, using default: AI and Technology")
+        collected["topic"] = "AI and Technology"
+    
+    if collected["num_posts"] is None:
+        print("⚠️  Number of posts not specified, using default: 5")
+        collected["num_posts"] = 5
+    
+    if collected["frequency"] is None:
+        print("⚠️  Frequency not specified, using default: weekly")
+        collected["frequency"] = "weekly"
+    
+    print(f"\n{'='*60}")
+    print("Collected Information:")
+    print(f"  • Expert Type: {collected['expert_type']}")
+    print(f"  • Topic: {collected['topic']}")
+    print(f"  • Number of Posts: {collected['num_posts']}")
+    print(f"  • Frequency: {collected['frequency']}")
+    print(f"{'='*60}\n")
+    
+    confirm = input("Is this correct? (Y/n): ").strip().lower()
+    
+    if confirm and confirm not in ["y", "yes", ""]:
+        print("\nLet's start over...\n")
+        return get_user_inputs()  # Recursive call to restart
+    
+    return collected
+
+
+def create_output_directory(base_path: str = "output") -> str:
+    """Create timestamped output directory structure."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = Path(base_path) / f"run_{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
-
+    
     (output_dir / "images").mkdir(exist_ok=True)
     (output_dir / "posts").mkdir(exist_ok=True)
     
     return str(output_dir)
 
 
-def get_user_inputs() -> dict:
-    """
-    Get user inputs for the content creation pipeline
-    
-    Returns:
-        Dictionary of user inputs
-    """
-    print("\n" + "="*60)
-    print("LinkedIn Content Creation Pipeline (LlamaIndex)")
-    print("="*60 + "\n")
-    
-    print("Select expert type:")
-    print("1. Generalista (General/Technical content)")
-    print("2. Prodotto (Product-focused content with RAG)")
-    expert_choice = input("\nEnter choice (1 or 2) [default: 1]: ").strip() or "1"
-    
-    expert_type = "generalista" if expert_choice == "1" else "prodotto"
-    
-    topic = input("\nEnter content topic [default: AI and Technology]: ").strip()
-    topic = topic if topic else "AI and Technology"
-    
-    num_posts_str = input("\nNumber of posts to create [default: 5]: ").strip()
-    try:
-        num_posts = int(num_posts_str) if num_posts_str else 5
-    except ValueError:
-        num_posts = 5
-    
-    print("\nPosting frequency:")
-    print("1. Daily")
-    print("2. Weekly")
-    print("3. Bi-weekly")
-    print("4. Monthly")
-    frequency_choice = input("\nEnter choice (1-4) [default: 2]: ").strip() or "2"
-    
-    frequency_map = {
-        "1": "daily",
-        "2": "weekly",
-        "3": "bi-weekly",
-        "4": "monthly"
-    }
-    frequency = frequency_map.get(frequency_choice, "weekly")
-    
-    return {
-        "expert_type": expert_type,
-        "topic": topic,
-        "num_posts": num_posts,
-        "frequency": frequency,
-    }
-
-
 def validate_environment() -> bool:
-    """
-    Validate required environment variables
-    
-    Returns:
-        True if environment is valid, False otherwise
-    """
+    """Validate environment variables and configuration."""
     provider = os.getenv("PROVIDER", "").lower()
     model = os.getenv("MODEL")
     
     if not provider:
         print("\n❌ Error: PROVIDER not set in .env file")
-        print("Set PROVIDER to: ollama, groq, openai, or anthropic")
+        print("Set PROVIDER to: ollama, openai, or anthropic")
         return False
     
     if not model:
@@ -119,10 +242,6 @@ def validate_environment() -> bool:
     
     if provider == "openai" and not os.getenv("OPENAI_API_KEY"):
         print("\n❌ Error: OPENAI_API_KEY required for OpenAI provider")
-        return False
-    
-    if provider == "groq" and not os.getenv("GROQ_API_KEY"):
-        print("\n❌ Error: GROQ_API_KEY required for Groq provider")
         return False
     
     if provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
@@ -139,13 +258,7 @@ def validate_environment() -> bool:
 
 
 def save_text_file_utf8(filepath: Path, content: str):
-    """
-    Save text file with proper UTF-8 encoding (handles emojis and special chars).
-    
-    Args:
-        filepath: Path to file
-        content: Text content to write
-    """
+    """Save text content to file with UTF-8 encoding."""
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
     
@@ -155,13 +268,7 @@ def save_text_file_utf8(filepath: Path, content: str):
 
 
 def save_results(results: dict, output_dir: str):
-    """
-    Save pipeline results to files with proper UTF-8 encoding.
-    
-    Args:
-        results: Results dictionary from workflow
-        output_dir: Output directory path
-    """
+    """Save all results to output directory."""
     output_path = Path(output_dir)
     
     try:
@@ -212,15 +319,7 @@ def save_results(results: dict, output_dir: str):
 
 
 def format_results_summary(results: dict) -> str:
-    """
-    Format results dictionary into a readable text summary.
-    
-    Args:
-        results: Results dictionary
-        
-    Returns:
-        Formatted text summary
-    """
+    """Format results into a readable summary."""
     lines = []
     lines.append("="*60)
     lines.append("LINKEDIN CONTENT CREATION RESULTS")
@@ -267,26 +366,18 @@ def format_results_summary(results: dict) -> str:
 
 
 async def run_pipeline_async(inputs: dict, output_dir: str):
-    """
-    Run the content creation pipeline asynchronously
-    
-    Args:
-        inputs: User inputs dictionary
-        output_dir: Output directory path
-    """
+    """Run the LinkedIn content creation pipeline."""
     try:
         print("\n" + "="*60)
         print("Initializing LinkedIn Content Pipeline...")
         print("="*60 + "\n")
         
-
         inputs["output_dir"] = output_dir
         
-
         crew = LinkedInCrew(inputs=inputs)
         
         print("\n🚀 Starting content generation workflow...\n")
-
+        
         results = await crew.kickoff()
         
         print("\n" + "="*60)
@@ -299,7 +390,7 @@ async def run_pipeline_async(inputs: dict, output_dir: str):
             print("\n✅ Content creation successful!")
             print(f"\n📁 Output directory: {output_dir}")
             print("\nGenerated files:")
-
+            
             output_path = Path(output_dir)
             md_files = sorted(output_path.rglob("*.md"))
             
@@ -326,18 +417,16 @@ async def run_pipeline_async(inputs: dict, output_dir: str):
 
 
 def main():
-    """
-    Main entry point
-    """
+    """Main entry point."""
     try:
         if not validate_environment():
             sys.exit(1)
-
+        
         inputs = get_user_inputs()
-
+        
         output_dir = create_output_directory()
         
-        print(f"\n📝 Configuration:")
+        print(f"\n📝 Final Configuration:")
         print(f"   Expert Type: {inputs['expert_type']}")
         print(f"   Topic: {inputs['topic']}")
         print(f"   Number of Posts: {inputs['num_posts']}")
