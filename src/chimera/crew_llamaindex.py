@@ -55,6 +55,10 @@ import requests
 import asyncio
 from dotenv import load_dotenv
 
+import html as html_module
+from string import Template
+import re
+
 
 try:
     from llama_index.core.agent.workflow import ReActAgent
@@ -732,6 +736,97 @@ class LinkedInWorkflow(Workflow):
         self.agents_config: Dict[str, AgentConfig] = inputs.get("agents_config", {})
         self.tasks_config: Dict[str, TaskConfig] = inputs.get("tasks_config", {})
 
+        self.post_html_template = self._load_post_template()
+    
+    def _load_post_template(self) -> Template:
+        template_path_str = self.inputs.get(
+            "post_template_path",
+            "templates/linkedin_post_preview.html",
+        )
+        template_path = Path(template_path_str)
+
+        try:
+            with open(template_path, "r", encoding="utf-8") as f:
+                text = f.read()
+            print(f"🧩 Loaded HTML template from {template_path}")
+            return Template(text)
+        except Exception as e:
+            print(f"⚠️ Could not load HTML template from {template_path}: {e}")
+            fallback = "<html><body><h1>${TITLE}</h1><div>${BODY_HTML}</div>${HASHTAGS_HTML}</body></html>"
+            return Template(fallback)
+
+    def _parse_post_block(self, raw_post: str):
+        """Extract title, body, and hashtags from a single '=== POST ...' block."""
+        lines = [l for l in raw_post.splitlines() if l.strip()]
+
+        title = "LinkedIn Post"
+        body_lines = []
+        hashtags = []
+
+        if not lines:
+            return title, "", hashtags
+
+        # First line is usually like: "=== POST 1: My Title ==="
+        header = lines[0].strip()
+        if header.startswith("=== POST"):
+            # Try to extract title between colon and ===
+            m = re.match(r"^=== POST\s+\d+:\s*(.*?)\s*===?$", header)
+            if m:
+                title = m.group(1).strip()
+            else:
+                title = header.strip("= ").strip()
+            content_lines = lines[1:]
+        else:
+            content_lines = lines
+
+        # Look for "Hashtags:" line
+        hashtag_idx = None
+        for i, line in enumerate(content_lines):
+            if line.strip().lower().startswith("hashtags:"):
+                hashtag_idx = i
+                break
+
+        if hashtag_idx is not None:
+            body_lines = content_lines[:hashtag_idx]
+            hashtag_line = content_lines[hashtag_idx]
+            # e.g. "Hashtags: #ai #llm #python"
+            parts = hashtag_line.split(":", 1)
+            if len(parts) == 2:
+                hashtags = [h for h in parts[1].strip().split() if h.startswith("#")]
+        else:
+            body_lines = content_lines
+
+        body = "\n".join(body_lines).strip()
+        return title, body, hashtags
+    
+    def _generate_post_preview_html(self, title: str, body: str, hashtags):
+        """Render a single post into a LinkedIn-like HTML preview using external template."""
+        author_name = self.inputs.get("author_name", "Your Name")
+        author_headline = self.inputs.get("author_headline", "AI Engineer | LinkedIn Content")
+        time_ago = "Just now"
+
+        esc = html_module.escape
+
+        body_html = esc(body).replace("\n", "<br>\n")
+
+        if hashtags:
+            hashtags_html = (
+                '<div class="post-hashtags">'
+                + " ".join(f"<span>{esc(h)}</span>" for h in hashtags)
+                + "</div>"
+            )
+        else:
+            hashtags_html = ""
+
+        return self.post_html_template.substitute(
+            AUTHOR_NAME=esc(author_name),
+            AUTHOR_HEADLINE=esc(author_headline),
+            TIME_AGO=esc(time_ago),
+            TITLE=esc(title),
+            BODY_HTML=body_html,
+            HASHTAGS_HTML=hashtags_html,
+        )
+
     def _get_agent_prompt(self, agent_name: str, task_context: str) -> str:
         """Build a complete prompt combining agent config and task context."""
         agent_config = self.agents_config.get(agent_name)
@@ -921,15 +1016,35 @@ VERIFICATION: After writing, count your posts. You should have EXACTLY {num_post
 
 IMPORTANT: Include clear "RESEARCH SOURCES:" section for each post."""
 
-        if self.expert_type == "generalista" and self.tools_working.get("web_search"):
-            result = await self._ask_agent("generalist_expert", task_context)
-        elif self.expert_type == "prodotto" and self.tools_working.get("knowledge_base"):
-            result = await self._ask_agent("product_expert", task_context)
+                # Decide whether to use an agent or go direct
+        use_agent = (
+            self.expert_type == "generalista" and self.tools_working.get("web_search")
+        ) or (
+            self.expert_type == "prodotto" and self.tools_working.get("knowledge_base")
+        )
+
+        if use_agent:
+            agent_name = "generalist_expert" if self.expert_type == "generalista" else "product_expert"
+            result = await self._ask_agent(agent_name, task_context)
+
+            failure_markers = [
+                "I'm unable to retrieve the necessary information",
+                "I cannot answer the question with the provided tools",
+                "I'm unable to access the required information",
+                "I don't have access to the necessary information",
+            ]
+
+            if ("=== POST" not in result) or any(m in result for m in failure_markers):
+                print(f"⚠️  {agent_name} returned a failure-style answer. Falling back to direct LLM...")
+                result = await self._call_llm(self.llm, task_context)
         else:
             result = await self._call_llm(self.llm, task_context)
+
         
         posts_clean = []
         research_notes = []
+
+        save_text_utf8(self.output_dir / "5_raw_llm_output.txt", result)
 
         sections = result.split("=== POST")
         for section in sections[1:]:
@@ -941,18 +1056,26 @@ IMPORTANT: Include clear "RESEARCH SOURCES:" section for each post."""
             else:
                 posts_clean.append("=== POST" + section.strip())
 
-        # Validate we have the correct number of posts
-        if len(posts_clean) != num_posts:
-            print(f"⚠️  Warning: Expected {num_posts} posts but got {len(posts_clean)}. Adjusting...")
-            
-            if len(posts_clean) < num_posts:
-                # Not enough posts - pad with placeholders
-                for i in range(len(posts_clean), num_posts):
-                    posts_clean.append(f"=== POST {i+1}: Additional Post Needed ===\n[Post content to be created]\n\nHashtags: #topic")
-            elif len(posts_clean) > num_posts:
-                # Too many posts - truncate
-                posts_clean = posts_clean[:num_posts]
-                research_notes = research_notes[:num_posts]
+        if len(posts_clean) == 0:
+            print(f"⚠️  No posts parsed from LLM output.")
+            failure_markers = [
+                "I'm unable to retrieve the necessary information",
+                "I cannot answer the question with the provided tools",
+            ]
+            if any(m in result for m in failure_markers):
+                print("⚠️  Detected failure-style message; not using it as a post.")
+                posts_clean = []
+            else:
+                print("ℹ️  Using raw LLM output as a single post.")
+                posts_clean = [result.strip()]
+                research_notes = []
+
+        if len(posts_clean) > num_posts:
+            print(f"⚠️  Warning: Expected {num_posts} posts but got {len(posts_clean)}. Truncating...")
+            posts_clean = posts_clean[:num_posts]
+            research_notes = research_notes[:num_posts]
+        elif len(posts_clean) < num_posts:
+            print(f"⚠️  Warning: Expected {num_posts} posts but only parsed {len(posts_clean)}. Keeping only real posts.")
 
         posts_only = "\n\n".join(posts_clean)
         research_summary = "\n\n".join(f"POST {i+1} SOURCES:\n{note}" for i, note in enumerate(research_notes))
@@ -963,11 +1086,22 @@ IMPORTANT: Include clear "RESEARCH SOURCES:" section for each post."""
         print(f"\n✅ Created {len(posts_clean)} posts with research")
 
         # Save posts cleanly
-        save_text_utf8(self.output_dir / "2_linkedin_posts.md", posts_only)
+        save_text_utf8(self.output_dir / "posts/2_linkedin_posts.md", posts_only)
         
         if research_summary:
             save_text_utf8(self.output_dir / "2_research_notes.txt", 
                           f"Research notes from post creation:\n\n{research_summary}")
+            
+        for idx, raw_post in enumerate(posts_clean, start=1):
+            if "[Post content to be created]" in raw_post:
+                print(f"⏭️  Skipping placeholder post {idx} (no real content).")
+                continue
+
+            title, body, hashtags = self._parse_post_block(raw_post)
+            html_doc = self._generate_post_preview_html(title, body, hashtags)
+            filename = self.output_dir / f"post_{idx:02d}_preview.html"
+            save_text_utf8(filename, html_doc)
+            print(f"🖼️  Saved HTML preview for post {idx} -> {filename}")
         
         return LinkedInPostsEvent(posts=posts_only, research_notes=research_summary)
 
@@ -1014,12 +1148,24 @@ IMPORTANT: Include clear "RESEARCH SOURCES:" section for each post."""
 
         result = await self._call_llm(self.llm, task_context)
         prompts = []
-        sections = result.split("=== POST")
-        for section in sections[1:]:
-            prompt_text = section.split("DALLE PROMPT ===")[1].strip() if "DALLE PROMPT ===" in section else section.strip()
-            prompt_text = prompt_text.split("===")[0].strip()
-            if prompt_text:
+        print(f"\n[DEBUG] Raw result length: {len(result)} chars")
+        print(f"[DEBUG] Result preview: {result[:200]}")
+
+        pattern = r"===\s*POST[^\n]*===\s*(.*?)(?=(?:===\s*POST[^\n]*===)|\Z)"
+        matches = re.findall(pattern, result, flags=re.S)
+
+        for i, match in enumerate(matches, 1):
+            prompt_text = match.strip()
+            if prompt_text and len(prompt_text) > 20:
                 prompts.append(prompt_text)
+                print(f"[DEBUG] Extracted prompt {i}: {prompt_text[:80]}...")
+
+        if not prompts:
+            print("[DEBUG] No prompts matched regex; using fallback single-prompt extraction.")
+            cleaned = result.strip()
+            if cleaned:
+                prompts.append(cleaned)
+
 
         if len(prompts) != num_posts:
             print(f"⚠️  Warning: Expected {num_posts} prompts but got {len(prompts)}. Adjusting...")
@@ -1035,7 +1181,7 @@ IMPORTANT: Include clear "RESEARCH SOURCES:" section for each post."""
         print(f"\n✅ Created {len(prompts)} visual prompts")
 
         prompts_text = "\n\n".join(f"POST {i+1} IMAGE PROMPT:\n{p}" for i, p in enumerate(prompts))
-        save_text_utf8(self.output_dir / "3_dalle_prompts.txt", prompts_text)
+        save_text_utf8(self.output_dir / "images/3_dalle_prompts.txt", prompts_text)
         
         return VisualsEvent(prompts=prompts, concepts=result)
 
