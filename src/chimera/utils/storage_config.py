@@ -1,84 +1,38 @@
-from crewai.memory import LongTermMemory, ShortTermMemory, EntityMemory
-from crewai.memory.storage import ltm_sqlite_storage
-from .storage_qdrant import QdrantStorage
-
-
 """
-LlamaIndex-compatible memory configuration.
+Lightweight wrappers around MemoryConfig for memory helpers.
 
-Provides simple helpers to construct memory buffers for:
-- Long-term memory
-- Short-term memory
-- Entity memory
-
-These return LlamaIndex ChatMemoryBuffer instances with configurable token limits.
+This module retains the original function names while delegating
+to `utils.memory_config.MemoryConfig` to avoid duplication.
 """
 
 from typing import Optional
-import os
 from llama_index.core.memory import ChatMemoryBuffer
+from llama_index.core import VectorStoreIndex
+from utils.memory_config import MemoryConfig
 
 
-def _env_int(name: str, default: int) -> int:
-    """Helper to read integer env values with defaults."""
-    try:
-        return int(os.getenv(name, str(default)))
-    except ValueError:
-        return default
+_mc = MemoryConfig()
 
 
 def get_long_term_memory(token_limit: Optional[int] = None) -> ChatMemoryBuffer:
-    """
-    Long-term memory as a larger ChatMemoryBuffer.
-
-    Env override: LONG_TERM_TOKEN_LIMIT
-    """
-    limit = token_limit or _env_int("LONG_TERM_TOKEN_LIMIT", 8000)
-    return ChatMemoryBuffer.from_defaults(token_limit=limit)
+    return _mc.get_long_term_memory(token_limit)
 
 
 def get_short_term_memory(token_limit: Optional[int] = None) -> ChatMemoryBuffer:
-    """
-    Short-term memory as a smaller ChatMemoryBuffer.
-
-    Env override: SHORT_TERM_TOKEN_LIMIT
-    """
-    limit = token_limit or _env_int("SHORT_TERM_TOKEN_LIMIT", 2000)
-    return ChatMemoryBuffer.from_defaults(token_limit=limit)
+    return _mc.get_short_term_memory(token_limit)
 
 
 def get_entity_memory(token_limit: Optional[int] = None) -> ChatMemoryBuffer:
-    """
-    Entity memory modeled as a medium ChatMemoryBuffer.
-
-    Env override: ENTITY_TOKEN_LIMIT
-    """
-    limit = token_limit or _env_int("ENTITY_TOKEN_LIMIT", 4000)
-    return ChatMemoryBuffer.from_defaults(token_limit=limit)
+    return _mc.get_entity_memory(token_limit)
 
 
-def get_long_term_memory():
-    ltm = LongTermMemory(
-        storage=ltm_sqlite_storage.LTMSQLiteStorage(
-            db_path="./memory/long_term_memory_storage.db"
-        )
-    )
-    return ltm
+def get_long_term_memory_index() -> Optional[VectorStoreIndex]:
+    return _mc.get_long_term_memory_index()
 
 
-def get_short_term_memory():
-    stm = ShortTermMemory(
-        storage=QdrantStorage(
-            type="short_term",
-        )
-    )
-    return stm
+def get_short_term_memory_index() -> Optional[VectorStoreIndex]:
+    return _mc.get_short_term_memory_index()
 
 
-def get_entity_memory():
-    entity = EntityMemory(
-        storage=QdrantStorage(
-            type="entity_storage",
-        )
-    )
-    return entity
+def get_entity_memory_index() -> Optional[VectorStoreIndex]:
+    return _mc.get_entity_memory_index()

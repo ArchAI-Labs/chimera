@@ -84,7 +84,6 @@ try:
     from tools.duckduckgo_tool import MyCustomDuckDuckGoTool
     from tools.dalle_tool import download_image_tool, DallETool
     from tools.qdrant_tool import search_knowledge, upsert_knowledge
-    from utils.storage_qdrant import QdrantStorage
     UTILS_AVAILABLE = True
 except ImportError:
     UTILS_AVAILABLE = False
@@ -196,9 +195,6 @@ except ImportError:
 
     def get_entity_memory():
         return None
-
-    class QdrantStorage:
-        pass
 
 load_dotenv()
 
