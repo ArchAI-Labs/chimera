@@ -46,13 +46,19 @@ warnings.warn = _silent_warn
 
 ###############################################
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 from datetime import datetime
 import yaml
+from bs4 import BeautifulSoup
 import requests
 import asyncio
 from dotenv import load_dotenv
+
+import html as html_module
+from string import Template
+import re
+
 
 try:
     from llama_index.core.agent.workflow import ReActAgent
@@ -70,8 +76,8 @@ from llama_index.core.workflow import (
 )
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.core.llms import ChatMessage
+from llama_index.core.agent.workflow import AgentStream
 
-# Import utilities with fallbacks
 try:
     from utils.utils import print_output, check_memory_dir, LLM_Config
     from utils.storage_config import (
@@ -139,7 +145,6 @@ except ImportError:
     try:
         from tools.duckduckgo_tool import MyCustomDuckDuckGoTool
     except ImportError:
-        # Real DuckDuckGo search fallback using ddgs or duckduckgo-search
         try:
             from ddgs import DDGS
         except ImportError:
@@ -154,7 +159,6 @@ except ImportError:
                     return f"Error: DuckDuckGo search library not available for query: {query}"
                 try:
                     with DDGS() as ddg:
-                        # Fetch top results with title, link, and snippet if available
                         results = ddg.text(query, max_results=5)
                     lines = []
                     for i, item in enumerate(results or [], 1):
@@ -199,7 +203,6 @@ except ImportError:
 load_dotenv()
 
 
-# Utility Functions
 def ensure_utf8_path(p: Path) -> Path:
     """Ensure parent directories exist for a given path."""
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -209,32 +212,23 @@ def ensure_utf8_path(p: Path) -> Path:
 def save_text_utf8(path: Path, text: str) -> Path:
     """
     Write text as UTF-8 with LF newlines. Handles emoji and special characters.
-    Never fails on encoding issues - replaces problematic characters if needed.
-    Works reliably on Windows by forcing UTF-8 encoding.
     """
     path = ensure_utf8_path(path)
     
-    # Convert Path to string to avoid any path encoding issues on Windows
     path_str = str(path)
     
     try:
-        # Force UTF-8 encoding with explicit error handling
-        # Using 'wb' mode and manual encoding to bypass Windows default encoding
         with open(path_str, 'wb') as f:
-            # Encode to UTF-8 bytes, replacing any problematic characters
             utf8_bytes = text.encode('utf-8', errors='replace')
             f.write(utf8_bytes)
     except Exception as e:
         print(f"⚠️  Warning saving to {path_str}: {e}")
-        # Last resort: sanitize and try again
         try:
-            # Remove or replace problematic characters
             sanitized = text.encode("utf-8", errors="ignore").decode("utf-8")
             with open(path_str, 'wb') as f:
                 f.write(sanitized.encode('utf-8'))
         except Exception as e2:
             print(f"❌ Error saving file {path_str}: {e2}")
-            # Final fallback: ASCII only
             try:
                 ascii_safe = text.encode("ascii", errors="ignore").decode("ascii")
                 with open(path_str, 'w', encoding='utf-8') as f:
@@ -252,32 +246,79 @@ def resolve_path(base_dir: Path, maybe_rel: str) -> Path:
     return p if p.is_absolute() else (base_dir / p)
 
 
-# Workflow Events
+# Simplified event structure
 class EditorialPlanEvent(Event):
     result: str
 
 
-class ContentGenerationEvent(Event):
-    result: str
-    content_type: str
-    editorial_plan: str
-
-
-class PostWritingEvent(Event):
-    result: str
-    editorial_plan: str
-    generated_content: str
+class LinkedInPostsEvent(Event):
+    """Posts are created with research included - no intermediate step"""
+    posts: str
+    research_notes: str
 
 
 class VisualsEvent(Event):
-    result: str
-    editorial_plan: str
-    generated_content: str
-    linkedin_posts: str
+    """Visual prompts ready for image generation"""
+    prompts: List[str]
+    concepts: str
 
 
-class PlanningCompleteEvent(Event):
-    result: str
+class AgentConfig:
+    """Helper class to manage agent configurations from YAML."""
+    
+    def __init__(self, config_dict: Dict[str, Any]):
+        self.role = config_dict.get("role", "")
+        self.goal = config_dict.get("goal", "")
+        self.backstory = config_dict.get("backstory", "")
+        self.tools = config_dict.get("tools", [])
+        self.max_iterations = config_dict.get("max_iterations", 15)
+    
+    def build_system_prompt(self) -> str:
+        """Build a comprehensive system prompt from config."""
+        parts = []
+        
+        if self.role:
+            parts.append(f"# Your Role\n{self.role}")
+        
+        if self.goal:
+            parts.append(f"# Your Goal\n{self.goal}")
+        
+        if self.backstory:
+            parts.append(f"# Your Background\n{self.backstory}")
+        
+        if parts:
+            return "\n\n".join(parts) + "\n\n---\n\n"
+        return ""
+    
+    def __repr__(self):
+        return f"AgentConfig(role='{self.role[:30]}...', goal='{self.goal[:30]}...')"
+
+
+class TaskConfig:
+    """Helper class to manage task configurations from YAML."""
+    
+    def __init__(self, config_dict: Dict[str, Any]):
+        self.description = config_dict.get("description", "")
+        self.expected_output = config_dict.get("expected_output", "")
+        self.agent = config_dict.get("agent", "")
+    
+    def build_task_prompt(self, context: str = "") -> str:
+        """Build a task prompt from config."""
+        parts = []
+        
+        if self.description:
+            parts.append(f"# Task\n{self.description}")
+        
+        if context:
+            parts.append(f"# Context\n{context}")
+        
+        if self.expected_output:
+            parts.append(f"# Expected Output\n{self.expected_output}")
+        
+        return "\n\n".join(parts) if parts else ""
+    
+    def __repr__(self):
+        return f"TaskConfig(agent='{self.agent}', description='{self.description[:30]}...')"
 
 
 class LinkedInCrew:
@@ -287,7 +328,6 @@ class LinkedInCrew:
         self.inputs = inputs if inputs is not None else {}
         print(f"USER INPUTS RECEIVED: {self.inputs}")
 
-        # Setup output directory - only create if it doesn't exist
         requested_out = self.inputs.get("output_dir")
         if requested_out:
             self.output_dir = Path(requested_out)
@@ -295,7 +335,6 @@ class LinkedInCrew:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.output_dir = Path("output") / f"run_{ts}"
         
-        # Only create if it doesn't exist
         if not self.output_dir.exists():
             self.output_dir.mkdir(parents=True, exist_ok=True)
             print(f"📁 Created output dir: {self.output_dir}")
@@ -304,11 +343,12 @@ class LinkedInCrew:
 
         check_memory_dir()
 
-        # Load configurations
-        self.agents_config = self._load_yaml_config("config/agents.yaml")
-        self.tasks_config = self._load_yaml_config("config/tasks.yaml")
+        self.agents_config = self._load_configs("config/agents.yaml")
+        self.tasks_config = self._load_configs("config/tasks.yaml")
+        
+        print(f"\n📋 Loaded {len(self.agents_config)} agent configs: {list(self.agents_config.keys())}")
+        print(f"📋 Loaded {len(self.tasks_config)} task configs: {list(self.tasks_config.keys())}")
 
-        # Setup LLMs
         provider = os.getenv("PROVIDER", "openai")
         model = os.getenv("MODEL")
         manager_model = os.getenv("MANAGER_MODEL") or model
@@ -335,21 +375,19 @@ class LinkedInCrew:
             timeout=timeout,
         )
 
-        # Initialize tools and agents
         self._initialize_tools()
         self._test_tools()
         self._initialize_agents()
 
-        # Ingest product sites from env into Qdrant
         self._ingest_product_sites()
 
-        # Setup workflow
         workflow_inputs = {
             **self.inputs,
+            "output_dir": str(self.output_dir),
             "agents_config": self.agents_config,
             "tasks_config": self.tasks_config,
-            "output_dir": str(self.output_dir),
         }
+        
         self.workflow = LinkedInWorkflow(
             agents=self.agents,
             llm=self.llm,
@@ -360,11 +398,24 @@ class LinkedInCrew:
             verbose=True,
         )
 
-    def _load_yaml_config(self, config_path: str) -> Dict[str, Any]:
-        """Load YAML configuration file with error handling."""
+    def _load_configs(self, config_path: str) -> Dict[str, Any]:
         try:
             with open(config_path, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f)
+                raw_config = yaml.safe_load(f) or {}
+            
+            if "agents.yaml" in config_path:
+                return {
+                    name: AgentConfig(cfg) 
+                    for name, cfg in raw_config.items()
+                }
+            elif "tasks.yaml" in config_path:
+                return {
+                    name: TaskConfig(cfg) 
+                    for name, cfg in raw_config.items()
+                }
+            else:
+                return raw_config
+                
         except FileNotFoundError:
             print(f"⚠️  Config file {config_path} not found. Using defaults.")
             return {}
@@ -392,7 +443,6 @@ class LinkedInCrew:
             print("ℹ️ No PRODUCT_SITES provided; skipping ingestion.")
             return
 
-        # Parse comma-separated URLs, trim, and deduplicate
         urls = [u.strip() for u in sites_str.split(",") if u.strip()]
         if not urls:
             print("ℹ️ PRODUCT_SITES is empty after parsing; skipping ingestion.")
@@ -401,7 +451,6 @@ class LinkedInCrew:
         collection = os.getenv("QDRANT_COLLECTION", "linkedin_knowledge")
         print(f"🔎 Ingesting {len(urls)} product site(s) into Qdrant collection '{collection}'")
 
-        # Read chunking parameters from env (with defaults)
         try:
             chunk_size = int(os.getenv("CHUNK_SIZE", "512"))
         except Exception:
@@ -410,44 +459,35 @@ class LinkedInCrew:
             chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "50"))
         except Exception:
             chunk_overlap = 50
-        # Ensure sensible bounds: size >= 1, 0 <= overlap < size
         chunk_size = max(1, chunk_size)
         chunk_overlap = max(0, min(chunk_overlap, chunk_size - 1))
 
         for url in urls:
             try:
-                # Fetch content
                 resp = requests.get(url, timeout=20)
                 resp.raise_for_status()
                 content_type = resp.headers.get("Content-Type", "").lower()
 
                 text = ""
                 if "text/markdown" in content_type or url.endswith(".md") or "raw.githubusercontent.com" in url:
-                    # Treat as text/markdown
                     text = resp.text
                 elif "text/plain" in content_type:
                     text = resp.text
                 else:
-                    # HTML fallback: extract visible text
                     try:
-                        from bs4 import BeautifulSoup
                         soup = BeautifulSoup(resp.content, "html.parser")
                         text = soup.get_text(separator="\n", strip=True)
                     except Exception as parse_err:
-                        # Fallback to raw text
                         text = resp.text
                         print(f"⚠️ HTML parse error for {url}: {parse_err}. Using raw text.")
 
-                # Sanitize/limit extremely long content to avoid token blowups
                 if not text or len(text.strip()) < 50:
                     print(f"⚠️ Skipping {url}: content too short or empty")
                     continue
 
-                # Optional: clip to a reasonable length for indexing
                 max_chars = 50_000
                 clipped = text[:max_chars]
 
-                # Upsert into Qdrant with metadata and env-driven chunking
                 metadata = {"url": url, "source": url, "type": "product_site"}
                 result = upsert_knowledge(
                     clipped,
@@ -471,7 +511,6 @@ class LinkedInCrew:
         
         print("\n🔧 Testing tools...")
         
-        # Test web search
         try:
             custom_search = MyCustomDuckDuckGoTool()
             result = custom_search.run("test query")
@@ -483,7 +522,6 @@ class LinkedInCrew:
         except Exception as e:
             print(f"⚠️  Web search tool: NOT WORKING ({str(e)[:50]})")
         
-        # Test knowledge base
         try:
             result = search_knowledge("test")
             self.tools_working["knowledge_base"] = True
@@ -494,35 +532,16 @@ class LinkedInCrew:
         print("")
 
     def _initialize_tools(self):
-        """Initialize all tools used by agents."""
-        
-        # Web search tool
-        if os.environ.get("SERPER_API_KEY"):
-            try:
-                from crewai_tools import SerperDevTool
-                web_search_fn = SerperDevTool()
-                self.web_search_tool = FunctionTool.from_defaults(
-                    fn=lambda query: web_search_fn.run(query),
-                    name="web_search",
-                    description="Search the web for information on a given topic",
-                )
-            except ImportError:
-                custom_search = MyCustomDuckDuckGoTool()
-                self.web_search_tool = FunctionTool.from_defaults(
-                    fn=lambda query: custom_search.run(query),
-                    name="web_search",
-                    description="Search the web for information on a given topic",
-                )
-        else:
-            # Use working DuckDuckGo fallback based on ddgs/duckduckgo-search
+        try:
             custom_search = MyCustomDuckDuckGoTool()
             self.web_search_tool = FunctionTool.from_defaults(
                 fn=lambda query: custom_search.run(query),
                 name="web_search",
                 description="Search the web for information on a given topic",
             )
+        except Exception as e:
+            print(f"Error in initializing tool: {e}")
 
-        # File writer tool
         def write_file(filename: str, content: str) -> str:
             """Write content to file with UTF-8 encoding."""
             try:
@@ -540,7 +559,6 @@ class LinkedInCrew:
             description="Write content to a file with UTF-8 encoding"
         )
 
-        # DALL-E tool
         dalle = DallETool(model="dall-e-3", size="1024x1024", quality="standard", n=1)
         self.dalle_tool = FunctionTool.from_defaults(
             fn=lambda prompt: dalle.run(prompt),
@@ -548,27 +566,14 @@ class LinkedInCrew:
             description="Generate an image using DALL-E based on a text prompt",
         )
 
-        # Image download tool
         self.download_image_tool = FunctionTool.from_defaults(
             fn=download_image_tool,
             name="download_image",
             description="Download an image from a URL",
         )
 
-        # Web scraper tool
         try:
-            from crewai_tools import ScrapeWebsiteTool
-            scraper = ScrapeWebsiteTool()
-            self.scraper_tool = FunctionTool.from_defaults(
-                fn=lambda url: scraper.run(url),
-                name="scrape_website",
-                description="Scrape content from a website URL",
-            )
-        except ImportError:
-            from bs4 import BeautifulSoup
-
             def simple_scraper(url: str) -> str:
-                """Simple web scraper fallback."""
                 try:
                     response = requests.get(url, timeout=10)
                     response.raise_for_status()
@@ -583,8 +588,9 @@ class LinkedInCrew:
                 name="scrape_website",
                 description="Scrape content from a website URL",
             )
+        except Exception as e:
+            print(f"Failed to run scraper: {e}")
 
-        # Knowledge base tools (respect QDRANT_COLLECTION env)
         collection = os.getenv("QDRANT_COLLECTION", "linkedin_knowledge")
         self.search_knowledge_tool = FunctionTool.from_defaults(
             fn=lambda query: search_knowledge(query, collection_name=collection),
@@ -598,20 +604,33 @@ class LinkedInCrew:
         )
 
     def _initialize_agents(self):
-        """Initialize all ReAct agents."""
+        """Initialize all ReAct agents with configurations from YAML."""
         self.agents = {}
 
-        # Generalist Expert Agent
+        agent_config = self.agents_config.get("generalist_expert")
+        if agent_config:
+            print(f"✅ Initializing Generalist Expert with config: {agent_config}")
+            max_iter = agent_config.max_iterations
+        else:
+            print("⚠️  No config for generalist_expert, using defaults")
+            max_iter = 15
+
         self.agents["generalist_expert"] = ReActAgent(
             tools=[self.web_search_tool],
             llm=self.llm,
             memory=get_short_term_memory(),
-            max_iterations=15,
+            max_iterations=max_iter,
             verbose=True,
         )
 
-        # Product Expert Agent
-        print("Activated agent: Product Expert (uses RAG + Scraper)")
+        agent_config = self.agents_config.get("product_expert")
+        if agent_config:
+            print(f"✅ Initializing Product Expert with config: {agent_config}")
+            max_iter = agent_config.max_iterations
+        else:
+            print("⚠️  No config for product_expert, using defaults")
+            max_iter = 20
+
         self.agents["product_expert"] = ReActAgent(
             tools=[
                 self.search_knowledge_tool,
@@ -620,38 +639,50 @@ class LinkedInCrew:
             ],
             llm=self.llm,
             memory=get_long_term_memory(),
-            max_iterations=20,
+            max_iterations=max_iter,
             verbose=True,
         )
 
-        # Designer Agent
+        agent_config = self.agents_config.get("designer")
+        if agent_config:
+            print(f"✅ Initializing Designer with config: {agent_config}")
+            max_iter = agent_config.max_iterations
+        else:
+            print("⚠️  No config for designer, using defaults")
+            max_iter = 15
+
         self.agents["designer"] = ReActAgent(
             tools=[self.dalle_tool, self.download_image_tool],
             llm=self.llm,
             memory=get_short_term_memory(),
-            max_iterations=15,
+            max_iterations=max_iter,
             verbose=True,
         )
 
-        # Planner Agent
+        agent_config = self.agents_config.get("planner")
+        if agent_config:
+            print(f"✅ Initializing Planner with config: {agent_config}")
+            max_iter = agent_config.max_iterations
+        else:
+            print("⚠️  No config for planner, using defaults")
+            max_iter = 10
+
         self.agents["planner"] = ReActAgent(
             tools=[self.file_writer_tool],
             llm=self.llm,
             memory=get_entity_memory(),
-            max_iterations=10,
+            max_iterations=max_iter,
             verbose=True,
         )
 
     def cleanup(self):
         """Cleanup resources and close all connections."""
         try:
-            # Close LLM connections
             if hasattr(self.llm, 'close'):
                 self.llm.close()
             if hasattr(self.manager_llm, 'close'):
                 self.manager_llm.close()
             
-            # Close agent connections
             for agent_name, agent in self.agents.items():
                 try:
                     if hasattr(agent, 'close'):
@@ -660,8 +691,7 @@ class LinkedInCrew:
                         agent.llm.close()
                 except Exception:
                     pass
-            
-            # Force garbage collection to clean up lingering connections
+
             import gc
             gc.collect()
             
@@ -689,7 +719,7 @@ class LinkedInCrew:
 
 
 class LinkedInWorkflow(Workflow):
-    """Workflow for creating LinkedIn content."""
+    """Streamlined workflow with reduced redundancy."""
     
     def __init__(self, agents: Dict[str, ReActAgent], llm, manager_llm,
                  inputs: Dict[str, Any], tools_working: Dict[str, bool], **kwargs):
@@ -701,10 +731,120 @@ class LinkedInWorkflow(Workflow):
         self.tools_working = tools_working
         self.expert_type = inputs.get("expert_type", "generalista")
         self.workflow_data = {}
-        # Use existing output directory from inputs
         self.output_dir = Path(self.inputs.get("output_dir", "output"))
-        # Don't create here - it's already created in LinkedInCrew.__init__
-        # self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.agents_config: Dict[str, AgentConfig] = inputs.get("agents_config", {})
+        self.tasks_config: Dict[str, TaskConfig] = inputs.get("tasks_config", {})
+
+        self.post_html_template = self._load_post_template()
+    
+    def _load_post_template(self) -> Template:
+        template_path_str = self.inputs.get(
+            "post_template_path",
+            "templates/linkedin_post_preview.html",
+        )
+        template_path = Path(template_path_str)
+
+        try:
+            with open(template_path, "r", encoding="utf-8") as f:
+                text = f.read()
+            print(f"🧩 Loaded HTML template from {template_path}")
+            return Template(text)
+        except Exception as e:
+            print(f"⚠️ Could not load HTML template from {template_path}: {e}")
+            fallback = "<html><body><h1>${TITLE}</h1><div>${BODY_HTML}</div>${HASHTAGS_HTML}</body></html>"
+            return Template(fallback)
+
+    def _parse_post_block(self, raw_post: str):
+        """Extract title, body, and hashtags from a single '=== POST ...' block."""
+        lines = [l for l in raw_post.splitlines() if l.strip()]
+
+        title = "LinkedIn Post"
+        body_lines = []
+        hashtags = []
+
+        if not lines:
+            return title, "", hashtags
+
+        # First line is usually like: "=== POST 1: My Title ==="
+        header = lines[0].strip()
+        if header.startswith("=== POST"):
+            # Try to extract title between colon and ===
+            m = re.match(r"^=== POST\s+\d+:\s*(.*?)\s*===?$", header)
+            if m:
+                title = m.group(1).strip()
+            else:
+                title = header.strip("= ").strip()
+            content_lines = lines[1:]
+        else:
+            content_lines = lines
+
+        # Look for "Hashtags:" line
+        hashtag_idx = None
+        for i, line in enumerate(content_lines):
+            if line.strip().lower().startswith("hashtags:"):
+                hashtag_idx = i
+                break
+
+        if hashtag_idx is not None:
+            body_lines = content_lines[:hashtag_idx]
+            hashtag_line = content_lines[hashtag_idx]
+            # e.g. "Hashtags: #ai #llm #python"
+            parts = hashtag_line.split(":", 1)
+            if len(parts) == 2:
+                hashtags = [h for h in parts[1].strip().split() if h.startswith("#")]
+        else:
+            body_lines = content_lines
+
+        body = "\n".join(body_lines).strip()
+        return title, body, hashtags
+    
+    def _generate_post_preview_html(self, title: str, body: str, hashtags):
+        """Render a single post into a LinkedIn-like HTML preview using external template."""
+        author_name = self.inputs.get("author_name", "Your Name")
+        author_headline = self.inputs.get("author_headline", "AI Engineer | LinkedIn Content")
+        time_ago = "Just now"
+
+        esc = html_module.escape
+
+        body_html = esc(body).replace("\n", "<br>\n")
+
+        if hashtags:
+            hashtags_html = (
+                '<div class="post-hashtags">'
+                + " ".join(f"<span>{esc(h)}</span>" for h in hashtags)
+                + "</div>"
+            )
+        else:
+            hashtags_html = ""
+
+        return self.post_html_template.substitute(
+            AUTHOR_NAME=esc(author_name),
+            AUTHOR_HEADLINE=esc(author_headline),
+            TIME_AGO=esc(time_ago),
+            TITLE=esc(title),
+            BODY_HTML=body_html,
+            HASHTAGS_HTML=hashtags_html,
+        )
+
+    def _get_agent_prompt(self, agent_name: str, task_context: str) -> str:
+        """Build a complete prompt combining agent config and task context."""
+        agent_config = self.agents_config.get(agent_name)
+        
+        if agent_config:
+            system_prompt = agent_config.build_system_prompt()
+            return f"{system_prompt}{task_context}"
+        else:
+            return task_context
+
+    def _get_task_prompt(self, task_name: str, context: str = "") -> str:
+        """Build a task prompt from task configuration."""
+        task_config = self.tasks_config.get(task_name)
+        
+        if task_config:
+            return task_config.build_task_prompt(context)
+        else:
+            return context
 
     async def _call_llm(self, llm, prompt: str) -> str:
         """Call LLM directly without agent."""
@@ -716,410 +856,472 @@ class LinkedInWorkflow(Workflow):
         result = str(response.message.content)
         
         print(f"✅ LLM Response length: {len(result)} characters")
-        print(f"📄 Preview: {result[:200]}...")
         return result
 
-    async def _ask_agent_with_fallback(self, agent: ReActAgent, prompt: str, 
-                                       max_iterations: int = 15, fallback_llm=None) -> str:
-        """Call agent with fallback to direct LLM on max iterations error."""
-        print(f"\n🔧 Calling ReActAgent (max_iterations={max_iterations})...")
-        print(f"📝 Prompt preview: {prompt[:150]}...")
+    async def _ask_agent(self, agent_name: str, prompt: str, 
+                        max_iterations: Optional[int] = None) -> str:
+        """Call an agent with its configuration-based prompt."""
+        agent = self.agents.get(agent_name)
+        if not agent:
+            raise ValueError(f"Agent '{agent_name}' not found")
+        
+        full_prompt = self._get_agent_prompt(agent_name, prompt)
+        
+        if max_iterations is None:
+            agent_config = self.agents_config.get(agent_name)
+            max_iterations = agent_config.max_iterations if agent_config else 15
+        
+        print(f"\n🔧 Calling {agent_name} (max_iterations={max_iterations})...")
         
         try:
             if hasattr(agent, "run"):
-                handler = agent.run(prompt, max_iterations=max_iterations)
+                handler = agent.run(full_prompt, max_iterations=max_iterations)
+                async for ev in handler.stream_events():
+                    if isinstance(ev, AgentStream):
+                        print(f"{ev.delta}", end="", flush=True)
                 result = await handler
-                print(f"✅ Agent completed")
-                print(f"📄 Result preview: {str(result)[:200]}...")
+                print(f"\n✅ {agent_name} completed")
                 return str(result)
             elif hasattr(agent, "aquery"):
-                result = await agent.aquery(prompt)
-                print(f"✅ Agent completed")
-                return str(result)
-            elif hasattr(agent, "achat"):
-                result = await agent.achat(prompt)
-                print(f"✅ Agent completed")
+                result = await agent.aquery(full_prompt)
+                print(f"✅ {agent_name} completed")
                 return str(result)
             else:
-                raise AttributeError("Agent has no usable run/aquery/achat methods")
+                raise AttributeError(f"Agent {agent_name} has no usable run/aquery methods")
         except Exception as e:
             error_msg = str(e)
             if "Max iterations" in error_msg or "WorkflowRuntimeError" in error_msg:
-                print(f"⚠️  Agent hit max iterations - falling back to direct LLM...")
-                if fallback_llm:
-                    return await self._call_llm(fallback_llm, prompt)
-                else:
-                    print(f"❌ No fallback LLM provided")
-                    raise
+                print(f"⚠️  {agent_name} hit max iterations - falling back to direct LLM...")
+                return await self._call_llm(self.llm, full_prompt)
             else:
-                print(f"❌ Agent error: {error_msg[:100]}")
+                print(f"❌ {agent_name} error: {error_msg[:100]}")
                 raise
 
     @step
     async def editorial_plan(self, ctx: Context, ev: StartEvent) -> EditorialPlanEvent:
-        """Step 1: Create editorial plan."""
+        """Step 1: Create concise editorial strategy (not detailed content)."""
         print("\n" + "="*60)
-        print("=== STEP 1: Editorial Planning ===")
+        print("=== STEP 1: Editorial Strategy ===")
         print("="*60)
 
         topic = self.inputs.get("topic", "AI and Technology")
         num_posts = self.inputs.get("num_posts", 5)
         frequency = self.inputs.get("frequency", "weekly")
 
-        prompt = f"""You are an expert content strategist. Create an editorial plan for {num_posts} LinkedIn posts about {topic}.
-The posts should be published {frequency}.
+        prompt = f"""Create a comprehensive editorial strategy for {num_posts} LinkedIn posts about {topic}, published {frequency}.
 
-Include:
-1. Post topics and angles
-2. Key messages for each post
-3. Target audience considerations
-4. Content mix (educational, promotional, thought leadership)
+        Provide a detailed strategic plan (400-600 words) covering:
 
-Provide a detailed, structured editorial plan."""
+        1. CONTENT THEMES ({num_posts} posts):
+        - Post 1: [Specific angle/topic] - [Why this matters to audience]
+        - Post 2: [Specific angle/topic] - [Why this matters to audience]
+        - (Continue for all {num_posts} posts)
+
+        2. TARGET AUDIENCE ANALYSIS:
+        - Primary audience: [Role, industry, pain points]
+        - Secondary audience: [Who else will benefit]
+        - Audience interests and needs
+
+        3. CONTENT STRATEGY:
+        - Content mix breakdown (e.g., 40% educational, 30% thought leadership, 30% promotional)
+        - Tone and voice guidelines
+        - Key messages to emphasize
+        - Engagement tactics
+
+        4. HASHTAG STRATEGY:
+        - 3-5 primary hashtags with reasoning
+        - Post-specific hashtag suggestions
+        
+        5. SUCCESS METRICS:
+        - What defines success for this campaign
+        - Key engagement indicators to track
+
+        Make it strategic and actionable."""
 
         result = await self._call_llm(self.manager_llm, prompt)
 
         self.workflow_data["editorial_plan"] = result
-        print(f"\n✅ Editorial plan created: {len(result)} characters")
+        print(f"\n✅ Editorial strategy created: {len(result)} characters")
         
-        save_text_utf8(self.output_dir / "editorial_plan.md", result)
+        # Only save strategy, not detailed content
+        save_text_utf8(self.output_dir / "1_editorial_strategy.md", result)
         
         return EditorialPlanEvent(result=result)
 
     @step
-    async def content_generation(self, ctx: Context, ev: EditorialPlanEvent) -> ContentGenerationEvent:
-        """Step 2: Generate content based on editorial plan."""
+    async def create_posts_with_research(self, ctx: Context, ev: EditorialPlanEvent) -> LinkedInPostsEvent:
+        """Step 2: Research AND write posts in one step - no intermediate files."""
         print("\n" + "="*60)
-        print("=== STEP 2: Content Generation ===")
+        print("=== STEP 2: Research & Write LinkedIn Posts ===")
         print("="*60)
 
         editorial_plan = ev.result
         topic = self.inputs.get("topic", "AI and Technology")
+        num_posts = self.inputs.get("num_posts", 5)
 
-        if self.expert_type == "generalista":
-            if self.tools_working.get("web_search"):
-                print("✅ Using Generalist Expert with web search...")
-                prompt = f"""Based on this editorial plan, generate detailed technical content about {topic}.
+        # Combine research and writing in ONE step
+        task_context = f"""You MUST create EXACTLY {num_posts} LinkedIn posts. No more, no less.
 
-Editorial Plan:
+Using this editorial strategy, research AND write {num_posts} complete LinkedIn posts about {topic}.
+
+Editorial Strategy:
 {editorial_plan}
 
-Your task:
-1. Use the web_search tool to find current information about {topic}
-2. Generate comprehensive technical content covering:
-   - Industry trends and insights
-   - Technical explanations
-   - Best practices
-   - Real-world applications
+CRITICAL REQUIREMENT: Create EXACTLY {num_posts} posts numbered 1 through {num_posts}.
 
-Search for recent information and incorporate it into your response.
-Format the output as structured, detailed content ready to be transformed into LinkedIn posts."""
-                
-                agent = self.agents["generalist_expert"]
-                result = await self._ask_agent_with_fallback(
-                    agent, prompt, max_iterations=15, fallback_llm=self.llm
-                )
-                content_type = "technical_with_search"
-            else:
-                print("⚠️  Web search not working - using direct LLM instead...")
-                prompt = f"""You are an expert content creator. Based on this editorial plan, generate detailed, engaging content about {topic}.
+YOUR TASK:
+1. For each post angle in the strategy:
+   - Research current info {"(use web_search tool)" if self.tools_working.get("web_search") else ""}{"(use search_knowledge tool)" if self.tools_working.get("knowledge_base") and self.expert_type == "prodotto" else ""}
+   - Write a complete, ready-to-publish LinkedIn post
+   
+2. Each post should be:
+   - 1800-2500 characters (aim for longer, more substantive posts)
+   - Start with a scroll-stopping hook that makes people stop scrolling
+   - Include 3-4 main body paragraphs with valuable insights
+   - Short paragraphs (2-3 sentences max per paragraph)
+   - Include 2-3 strategic emojis throughout
+   - Add specific examples, stats, or stories to illustrate points
+   - End with clear, actionable CTA
+   - Include 3-5 relevant hashtags at the end
+   - Use line breaks for readability
 
-Editorial Plan:
-{editorial_plan}
+OUTPUT FORMAT (YOU MUST CREATE {num_posts} POSTS):
+=== POST 1: [Title/Topic] ===
+[Complete post text here including emojis and line breaks]
 
-Generate comprehensive content covering:
-- Industry trends and insights
-- Technical explanations
-- Best practices
-- Real-world applications
-- Examples and case studies
+Hashtags: #hashtag1 #hashtag2 #hashtag3
 
-Format the output as structured, detailed content ready to be transformed into LinkedIn posts.
-Make it substantive and valuable - at least 500 words of quality content."""
+RESEARCH SOURCES:
+- Key insight 1: [specific data point or trend used]
+- Key insight 2: [another source or statistic referenced]
+---
 
-                result = await self._call_llm(self.llm, prompt)
-                content_type = "technical_direct"
+=== POST 2: [Title/Topic] ===
+[Complete post text here including emojis and line breaks]
 
-        elif self.expert_type == "prodotto":
-            if self.tools_working.get("knowledge_base"):
-                print("✅ Using Product Expert with knowledge base...")
-                prompt = f"""Based on this editorial plan, generate product-focused content about {topic}.
+Hashtags: #hashtag1 #hashtag2 #hashtag3
 
-Editorial Plan:
-{editorial_plan}
+RESEARCH SOURCES:
+- Key insight 1: [specific data point or trend used]
+- Key insight 2: [another source or statistic referenced]
+---
 
-Your task:
-1. Use the search_knowledge tool to find relevant product information
-2. Generate product-focused content covering:
-   - Product features and benefits
-   - Use cases and success stories
-   - Competitive advantages
-   - Customer pain points and solutions
+=== POST 3: [Title/Topic] ===
+[Continue same format...]
+---
 
-Format the output as structured content ready for LinkedIn posts."""
-                
-                agent = self.agents["product_expert"]
-                result = await self._ask_agent_with_fallback(
-                    agent, prompt, max_iterations=20, fallback_llm=self.llm
-                )
-                content_type = "product_with_kb"
-            else:
-                print("⚠️  Knowledge base not working - using direct LLM instead...")
-                prompt = f"""You are an expert content creator. Based on this editorial plan, generate detailed product-focused content about {topic}.
+REPEAT THIS FORMAT UNTIL YOU HAVE {num_posts} POSTS TOTAL.
 
-Editorial Plan:
-{editorial_plan}
+VERIFICATION: After writing, count your posts. You should have EXACTLY {num_posts} posts numbered 1 through {num_posts}.
 
-Generate comprehensive content covering:
-- Product features and benefits
-- Use cases and success stories
-- Competitive advantages
-- Customer pain points and solutions
-- Examples and case studies
+IMPORTANT: Include clear "RESEARCH SOURCES:" section for each post."""
 
-Format the output as structured, detailed content ready to be transformed into LinkedIn posts.
-Make it substantive and valuable - at least 500 words of quality content."""
+                # Decide whether to use an agent or go direct
+        use_agent = (
+            self.expert_type == "generalista" and self.tools_working.get("web_search")
+        ) or (
+            self.expert_type == "prodotto" and self.tools_working.get("knowledge_base")
+        )
 
-                result = await self._call_llm(self.llm, prompt)
-                content_type = "product_direct"
+        if use_agent:
+            agent_name = "generalist_expert" if self.expert_type == "generalista" else "product_expert"
+            result = await self._ask_agent(agent_name, task_context)
+
+            failure_markers = [
+                "I'm unable to retrieve the necessary information",
+                "I cannot answer the question with the provided tools",
+                "I'm unable to access the required information",
+                "I don't have access to the necessary information",
+            ]
+
+            if ("=== POST" not in result) or any(m in result for m in failure_markers):
+                print(f"⚠️  {agent_name} returned a failure-style answer. Falling back to direct LLM...")
+                result = await self._call_llm(self.llm, task_context)
         else:
-            print("Using direct LLM (no expert type specified)...")
-            prompt = f"""You are an expert content creator. Based on this editorial plan, generate detailed, engaging content about {topic}.
+            result = await self._call_llm(self.llm, task_context)
 
-Editorial Plan:
-{editorial_plan}
-
-Generate comprehensive content covering:
-- Industry trends and insights
-- Technical explanations
-- Best practices
-- Real-world applications
-- Examples and case studies
-
-Format the output as structured, detailed content ready to be transformed into LinkedIn posts.
-Make it substantive and valuable - at least 500 words of quality content."""
-
-            result = await self._call_llm(self.llm, prompt)
-            content_type = "general"
-
-        self.workflow_data["generated_content"] = result
-        print(f"\n✅ Content generated ({content_type}): {len(result)} characters")
         
-        save_text_utf8(self.output_dir / "generated_content.md", result)
+        posts_clean = []
+        research_notes = []
+
+        save_text_utf8(self.output_dir / "5_raw_llm_output.txt", result)
+
+        sections = result.split("=== POST")
+        for section in sections[1:]:
+            if "RESEARCH SOURCES:" in section:
+                parts = section.split("RESEARCH SOURCES:")
+                posts_clean.append("=== POST" + parts[0].strip())
+                if len(parts) > 1:
+                    research_notes.append(parts[1].split("---")[0].strip())
+            else:
+                posts_clean.append("=== POST" + section.strip())
+
+        if len(posts_clean) == 0:
+            print(f"⚠️  No posts parsed from LLM output.")
+            failure_markers = [
+                "I'm unable to retrieve the necessary information",
+                "I cannot answer the question with the provided tools",
+            ]
+            if any(m in result for m in failure_markers):
+                print("⚠️  Detected failure-style message; not using it as a post.")
+                posts_clean = []
+            else:
+                print("ℹ️  Using raw LLM output as a single post.")
+                posts_clean = [result.strip()]
+                research_notes = []
+
+        if len(posts_clean) > num_posts:
+            print(f"⚠️  Warning: Expected {num_posts} posts but got {len(posts_clean)}. Truncating...")
+            posts_clean = posts_clean[:num_posts]
+            research_notes = research_notes[:num_posts]
+        elif len(posts_clean) < num_posts:
+            print(f"⚠️  Warning: Expected {num_posts} posts but only parsed {len(posts_clean)}. Keeping only real posts.")
+
+        posts_only = "\n\n".join(posts_clean)
+        research_summary = "\n\n".join(f"POST {i+1} SOURCES:\n{note}" for i, note in enumerate(research_notes))
+
+        self.workflow_data["posts"] = posts_only
+        self.workflow_data["research"] = research_summary
+
+        print(f"\n✅ Created {len(posts_clean)} posts with research")
+
+        # Save posts cleanly
+        save_text_utf8(self.output_dir / "posts/2_linkedin_posts.md", posts_only)
         
-        return ContentGenerationEvent(
-            result=result, 
-            content_type=content_type,
-            editorial_plan=editorial_plan
-        )
+        if research_summary:
+            save_text_utf8(self.output_dir / "2_research_notes.txt", 
+                          f"Research notes from post creation:\n\n{research_summary}")
+            
+        for idx, raw_post in enumerate(posts_clean, start=1):
+            if "[Post content to be created]" in raw_post:
+                print(f"⏭️  Skipping placeholder post {idx} (no real content).")
+                continue
+
+            title, body, hashtags = self._parse_post_block(raw_post)
+            html_doc = self._generate_post_preview_html(title, body, hashtags)
+            filename = self.output_dir / f"post_{idx:02d}_preview.html"
+            save_text_utf8(filename, html_doc)
+            print(f"🖼️  Saved HTML preview for post {idx} -> {filename}")
+        
+        return LinkedInPostsEvent(posts=posts_only, research_notes=research_summary)
 
     @step
-    async def write_linkedin_post(self, ctx: Context, ev: ContentGenerationEvent) -> PostWritingEvent:
-        """Step 3: Transform content into LinkedIn posts."""
+    async def create_visual_prompts(self, ctx: Context, ev: LinkedInPostsEvent) -> VisualsEvent:
+        """Step 3: Generate actionable DALL-E prompts (not just concepts)."""
         print("\n" + "="*60)
-        print("=== STEP 3: Writing LinkedIn Post ===")
+        print("=== STEP 3: Generate Visual Prompts ===")
         print("="*60)
 
-        content = ev.result
-        editorial_plan = ev.editorial_plan
-        num_posts = self.inputs.get('num_posts', 5)
+        posts = ev.posts
+        num_posts = self.inputs.get("num_posts", 5)
 
-        prompt = f"""You are an expert LinkedIn copywriter. Transform this content into {num_posts} engaging, ready-to-publish LinkedIn posts.
+        task_context = f"""Based on these LinkedIn posts, create EXACTLY {num_posts} READY-TO-USE DALL-E prompts for image generation.
 
-Editorial Plan:
-{editorial_plan[:500]}...
+        Posts:
+        {posts[:2000]}...
 
-Generated Content:
-{content}
+        CRITICAL: You MUST create EXACTLY {num_posts} DALL-E prompts, one for each post.
 
-Create {num_posts} separate LinkedIn posts, each one should:
-- Start with a compelling hook in the first line
-- Use short paragraphs (2-3 sentences max)
-- Include 3-5 relevant hashtags at the end
-- Have a clear call-to-action
-- Be between 150-300 words
-- Use emojis strategically (1-2 per post)
-- Tell a story or provide unique value
+        For each post, create a detailed DALL-E prompt that can be used immediately.
 
-Format as:
+        DALLE PROMPT REQUIREMENTS:
+        - Be specific and detailed (describe exactly what to show)
+        - Include style (e.g., "minimalist flat design", "professional 3D render")
+        - Specify colors (e.g., "blue and white color scheme")
+        - No text in images
+        - Professional and clean
+        - LinkedIn-appropriate
 
-=== POST 1 ===
-[First post content here]
-[hashtags]
+        OUTPUT FORMAT (MUST HAVE {num_posts} PROMPTS):
+        === POST 1 DALLE PROMPT ===
+        [Complete, detailed DALL-E prompt ready to use]
 
-=== POST 2 ===
-[Second post content here]
-[hashtags]
+        === POST 2 DALLE PROMPT ===
+        [Complete, detailed DALL-E prompt ready to use]
 
-And so on..."""
+        === POST 3 DALLE PROMPT ===
+        [Complete, detailed DALL-E prompt ready to use]
 
-        result = await self._call_llm(self.llm, prompt)
+        CONTINUE THIS FORMAT FOR ALL {num_posts} POSTS.
 
-        self.workflow_data["linkedin_posts"] = result
-        print(f"\n✅ LinkedIn posts written: {len(result)} characters")
+        VERIFICATION: Count your prompts. You should have EXACTLY {num_posts} prompts numbered 1 through {num_posts}."""
+
+        result = await self._call_llm(self.llm, task_context)
+        prompts = []
+        print(f"\n[DEBUG] Raw result length: {len(result)} chars")
+        print(f"[DEBUG] Result preview: {result[:200]}")
+
+        pattern = r"===\s*POST[^\n]*===\s*(.*?)(?=(?:===\s*POST[^\n]*===)|\Z)"
+        matches = re.findall(pattern, result, flags=re.S)
+
+        for i, match in enumerate(matches, 1):
+            prompt_text = match.strip()
+            if prompt_text and len(prompt_text) > 20:
+                prompts.append(prompt_text)
+                print(f"[DEBUG] Extracted prompt {i}: {prompt_text[:80]}...")
+
+        if not prompts:
+            print("[DEBUG] No prompts matched regex; using fallback single-prompt extraction.")
+            cleaned = result.strip()
+            if cleaned:
+                prompts.append(cleaned)
+
+
+        if len(prompts) != num_posts:
+            print(f"⚠️  Warning: Expected {num_posts} prompts but got {len(prompts)}. Adjusting...")
+            
+            if len(prompts) < num_posts:
+                for i in range(len(prompts), num_posts):
+                    prompts.append(f"Professional LinkedIn post illustration for post {i+1}, minimalist design, blue and white color scheme, clean and modern")
+            elif len(prompts) > num_posts:
+                prompts = prompts[:num_posts]
+
+        self.workflow_data["visual_prompts"] = prompts
+
+        print(f"\n✅ Created {len(prompts)} visual prompts")
+
+        prompts_text = "\n\n".join(f"POST {i+1} IMAGE PROMPT:\n{p}" for i, p in enumerate(prompts))
+        save_text_utf8(self.output_dir / "images/3_dalle_prompts.txt", prompts_text)
         
-        posts_dir = self.output_dir / "posts"
-        posts_dir.mkdir(exist_ok=True)
-        save_text_utf8(posts_dir / "linkedin_posts.md", result)
-        
-        return PostWritingEvent(
-            result=result,
-            editorial_plan=editorial_plan,
-            generated_content=content
-        )
+        return VisualsEvent(prompts=prompts, concepts=result)
 
     @step
-    async def create_visuals(self, ctx: Context, ev: PostWritingEvent) -> VisualsEvent:
-        """Step 4: Create visual concepts for posts."""
+    async def create_content_calendar(self, ctx: Context, ev: VisualsEvent) -> StopEvent:
+        """Step 4: Create publishing calendar ONLY (no content repetition)."""
         print("\n" + "="*60)
-        print("=== STEP 4: Creating Visual Assets ===")
+        print("=== STEP 4: Content Calendar ===")
         print("="*60)
 
-        posts = ev.result
-
-        prompt = f"""You are a visual designer. Based on these LinkedIn posts, create detailed visual design concepts.
-
-LinkedIn Posts:
-{posts[:1000]}
-
-For each post, provide:
-1. Visual concept description (what the image should show)
-2. Color scheme (primary and secondary colors)
-3. Design style (minimalist, bold, professional, etc.)
-4. Key visual elements to include
-5. Text overlay suggestions (if any)
-
-Format as:
-
-=== VISUAL 1 ===
-Concept: [description]
-Colors: [color scheme]
-Style: [style]
-Elements: [key elements]
-
-=== VISUAL 2 ===
-[and so on...]"""
-
-        result = await self._call_llm(self.llm, prompt)
-
-        self.workflow_data["visuals"] = result
-        print(f"\n✅ Visual concepts created: {len(result)} characters")
+        topic = self.inputs.get("topic", "AI and Technology")
+        num_posts = self.inputs.get("num_posts", 5)
+        frequency = self.inputs.get("frequency", "weekly")
         
-        images_dir = self.output_dir / "images"
-        images_dir.mkdir(exist_ok=True)
-        save_text_utf8(images_dir / "visuals_info.md", result)
-        
-        return VisualsEvent(
-            result=result,
-            editorial_plan=ev.editorial_plan,
-            generated_content=ev.generated_content,
-            linkedin_posts=posts
-        )
+        # Get the posts and prompts
+        posts = self.workflow_data.get("posts", "")
+        prompts = ev.prompts
 
-    @step
-    async def plan_posts(self, ctx: Context, ev: VisualsEvent) -> StopEvent:
-        """Step 5: Create final content plan and save all results."""
-        print("\n" + "="*60)
-        print("=== STEP 5: Planning and Saving ===")
-        print("="*60)
+        post_titles = []
+        post_sections = posts.split("=== POST")
+        for section in post_sections[1:]:  # Skip empty first section
+            lines = section.strip().split("\n")
+            if lines:
+                title_line = lines[0].replace(":", "").strip()
+                # Remove any numbering
+                title_clean = title_line.split("===")[0].strip()
+                post_titles.append(title_clean)
 
-        editorial_plan = ev.editorial_plan
-        content = ev.generated_content
-        posts = ev.linkedin_posts
-        visuals = ev.result
+        # Ensure we have exactly num_posts titles
+        while len(post_titles) < num_posts:
+            post_titles.append(f"LinkedIn Post {len(post_titles) + 1}")
+        if len(post_titles) > num_posts:
+            post_titles = post_titles[:num_posts]
 
-        final_plan = f"""# LinkedIn Content Calendar
+        titles_list = "\n".join([f"{i+1}. {title}" for i, title in enumerate(post_titles)])
 
-## Editorial Plan
-{editorial_plan}
+        calendar_prompt = f"""Create a LinkedIn publishing calendar for EXACTLY {num_posts} posts about {topic}, published {frequency}.
 
----
+        CRITICAL: You MUST create calendar entries for ALL {num_posts} posts. No more, no less.
 
-## Generated Content
-{content}
+        Post titles:
+        {titles_list}
 
----
+        Create a clear, readable calendar in this format:
 
-## LinkedIn Posts (Ready to Publish)
-{posts}
+        ## POST 1: {post_titles[0] if post_titles else "Post 1"}
+        **Publishing Date:** [Calculate from next Monday, based on {frequency}]
+        **Posting Time:** [Best time for LinkedIn, e.g., 8:00 AM or 12:00 PM]
+        **Visual Asset:** DALL-E Prompt #1 (see 3_dalle_prompts.txt)
+        **Target Metrics:** 
+        - Impressions: [target number]
+        - Engagement rate: [target %]
+        - Comments: [target number]
 
----
+        ---
 
-## Visual Asset Concepts
-{visuals}
+        ## POST 2: {post_titles[1] if len(post_titles) > 1 else "Post 2"}
+        **Publishing Date:** [Next date based on {frequency}]
+        **Posting Time:** [Best time]
+        **Visual Asset:** DALL-E Prompt #2 (see 3_dalle_prompts.txt)
+        **Target Metrics:**
+        - Impressions: [target number]
+        - Engagement rate: [target %]
+        - Comments: [target number]
 
----
+        ---
+
+        {''.join([f"""
+        ## POST {i+1}: {post_titles[i] if i < len(post_titles) else f"Post {i+1}"}
+        **Publishing Date:** [Next date based on {frequency}]
+        **Posting Time:** [Best time]
+        **Visual Asset:** DALL-E Prompt #{i+1} (see 3_dalle_prompts.txt)
+        **Target Metrics:**
+        - Impressions: [target number]
+        - Engagement rate: [target %]
+        - Comments: [target number]
+
+        ---
+        """ for i in range(2, num_posts)])}
+
+        VERIFICATION: Count your calendar entries. You should have EXACTLY {num_posts} entries numbered 1 through {num_posts}.
+
+        CRITICAL: Include ALL {num_posts} posts in the calendar!"""
+
+        calendar = await self._call_llm(self.llm, calendar_prompt)
+
+        final_output = f"""# LinkedIn Content Calendar - {topic}
 
 ## Publishing Schedule
-- Frequency: {self.inputs.get('frequency', 'weekly')}
-- Number of posts: {self.inputs.get('num_posts', 5)}
-- Topic: {self.inputs.get('topic', 'AI and Technology')}
 
-## Engagement Strategy
-1. Post at optimal times (9 AM, 12 PM, or 5 PM on weekdays)
-2. Respond to comments within 1 hour
-3. Engage with relevant posts in your network
-4. Track metrics: likes, comments, shares, profile views
+{calendar}
 
-## Success Metrics
-- Target engagement rate: 3-5%
-- Target reach: 1000+ impressions per post
-- Target profile views: 50+ per week
+---
+
+## Files Generated
+
+1. **1_editorial_strategy.md** - High-level content strategy
+2. **2_linkedin_posts.md** - {num_posts} ready-to-publish posts
+3. **2_research_notes.txt** - Research insights used
+4. **3_dalle_prompts.txt** - {len(prompts)} image generation prompts
+5. **4_content_calendar.md** - This publishing schedule
+
+---
+
+## Next Steps
+
+1. Review and customize posts in `2_linkedin_posts.md`
+2. Generate images using prompts in `3_dalle_prompts.txt`
+3. Follow the publishing schedule above
+4. Track metrics: engagement rate, reach, clicks, comments
+
+---
+
+## Quick Stats
+
+- Total posts: {num_posts}
+- Publishing frequency: {frequency}
+- Content type: {"Technical/General" if self.expert_type == "generalista" else "Product-focused"}
+- Tools used: {"Web search, " if self.tools_working.get("web_search") else ""}{"Knowledge base, " if self.tools_working.get("knowledge_base") else ""}LLM generation
 """
 
-        try:
-            save_text_utf8(self.output_dir / "final_content_plan.md", final_plan)
-            save_text_utf8(self.output_dir / "linkedin_content_plan.md", final_plan)
-            print(f"✅ Saved content plan ({len(final_plan)} characters)")
-            result_msg = f"Successfully saved content plan with {len(final_plan)} characters"
-        except Exception as e:
-            print(f"❌ Error saving file: {str(e)}")
-            result_msg = f"Error saving file: {str(e)}"
-
+        save_text_utf8(self.output_dir / "4_content_calendar.md", final_output)
+        
+        print(f"\n✅ Content calendar created")
         print("\n" + "="*60)
-        print("✅ Content planning complete!")
+        print("✅ Workflow Complete!")
         print("="*60)
+        print(f"\nGenerated files:")
+        print(f"  1. 1_editorial_strategy.md - Strategic overview")
+        print(f"  2. 2_linkedin_posts.md - {num_posts} ready posts")
+        print(f"  3. 2_research_notes.txt - Research references")
+        print(f"  4. 3_dalle_prompts.txt - Image generation prompts")
+        print(f"  5. 4_content_calendar.md - Publishing schedule")
         
         return StopEvent(
             result={
                 "status": "success",
-                "editorial_plan": editorial_plan,
-                "generated_content": content,
-                "linkedin_posts": posts,
-                "visuals": visuals,
-                "final_plan": result_msg,
                 "output_directory": str(self.output_dir),
+                "files_generated": 5,
+                "posts_created": num_posts,
+                "prompts_created": len(prompts)
             }
         )
-
-    def _test_tools(self):
-        """Test which tools are working properly."""
-        self.tools_working = {
-            "web_search": False,
-            "file_writer": True,
-            "knowledge_base": False,
-        }
-        
-        print("\n🔧 Testing tools...")
-        
-        # Test web search
-        try:
-            custom_search = MyCustomDuckDuckGoTool()
-            result = custom_search.run("site:duckduckgo.com test")
-            if result and isinstance(result, str) and len(result) > 10 and "Error" not in result:
-                self.tools_working["web_search"] = True
-                print("✅ Web search tool: WORKING")
-            else:
-                print("⚠️  Web search tool: NOT WORKING (empty or error)")
-        except Exception as e:
-            print(f"⚠️  Web search tool: NOT WORKING ({str(e)[:50]})")
-        
-        # Test knowledge base
-        try:
-            result = search_knowledge("test")
-            self.tools_working["knowledge_base"] = True
-            print("✅ Knowledge base: WORKING")
-        except Exception as e:
-            print(f"⚠️  Knowledge base: NOT WORKING ({str(e)[:50]})")
-        
-        print("")

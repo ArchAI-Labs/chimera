@@ -1,183 +1,103 @@
 editorial_plan:
   description: |
-    Create a comprehensive editorial plan for LinkedIn content based on the given topic.
+    Create a CONCISE editorial strategy (not detailed content) for LinkedIn content.
     
-    The plan should include:
-    - Content themes and angles for each post
-    - Target audience considerations
-    - Key messages and value propositions
-    - Content mix (educational, promotional, thought leadership)
-    - Trending topics and relevant hashtags
-    - Optimal posting times
+    This should be a brief strategic document (200-300 words) that includes:
+    - List of specific post topics/angles (one per post requested)
+    - Target audience definition
+    - Content mix strategy (educational vs promotional vs thought leadership)
+    - Hashtag strategy (3-5 main hashtags)
     
-    Topic: {topic}
-    Number of posts: {num_posts}
-    Frequency: {frequency}
-    
-    Conduct research on current trends, analyze successful content in the space,
-    and create a strategic plan that maximizes engagement potential.
+    Keep it strategic and concise - just the plan, not the actual content.
     
   expected_output: |
-    A detailed editorial plan document containing:
-    1. Executive summary
-    2. Individual post concepts with titles
-    3. Content angles and key messages
-    4. Target audience profile
-    5. Hashtag strategy
-    6. Publishing schedule
+    A brief strategic overview containing:
+    1. {num_posts} specific post topics/angles listed
+    2. Target audience profile (1-2 sentences)
+    3. Content mix percentages
+    4. Primary hashtag strategy
+    
+    Should be 200-300 words max.
 
-technical_content:
+posts_with_research:
   description: |
-    Generate detailed technical content based on the editorial plan.
+    Research current information AND write complete LinkedIn posts in one step.
     
-    For each post concept in the plan, create:
-    - In-depth research and analysis
-    - Key statistics and data points
-    - Industry insights and trends
-    - Expert perspectives
-    - Practical applications
-    - Best practices and recommendations
+    For each post angle from the editorial strategy:
+    1. Research relevant, current information
+       - Use web_search tool for technical/industry content
+       - Use search_knowledge tool for product-specific content
+       - Find statistics, trends, and insights
     
-    Use web search to find current information, relevant studies, and industry reports.
-    Ensure all information is accurate, up-to-date, and properly sourced.
+    2. Write a complete, ready-to-publish LinkedIn post
+       - 1300-2000 characters
+       - Scroll-stopping first line
+       - Short paragraphs (1-2 lines each)
+       - 1-2 strategic emojis
+       - Clear call-to-action
+       - 3-5 relevant hashtags
+    
+    3. Include a brief research note (1-2 sentences) citing key data used
+    
+    DO NOT create separate research documents - integrate research into posts.
     
   expected_output: |
-    Comprehensive technical content including:
-    1. Detailed research findings for each topic
-    2. Relevant statistics and data
-    3. Industry trends and insights
-    4. Expert quotes and perspectives
-    5. Practical examples and use cases
-    6. Supporting evidence and sources
+    {num_posts} complete LinkedIn posts formatted as:
+    
+    === POST 1: [Title] ===
+    [Complete post text]
+    [hashtags]
+    [Brief research note: key insights used]
+    
+    === POST 2: [Title] ===
+    [Complete post text]
+    [hashtags]
+    [Brief research note: key insights used]
+    
+    (etc.)
 
-product_content:
+visual_prompts:
   description: |
-    Create compelling product-focused content using the knowledge base and web research.
+    Create ready-to-use DALL-E image generation prompts for each post.
     
-    For each post concept:
-    - Search the knowledge base for relevant product information
-    - Identify key features, benefits, and use cases
-    - Find customer success stories and testimonials
-    - Research competitive advantages
-    - Gather technical specifications if relevant
-    - Create narrative around product value
+    For each post, analyze the content and create a detailed DALL-E prompt that:
+    - Describes exactly what should be shown in the image
+    - Specifies the visual style (minimalist, professional, bold, etc.)
+    - Includes color scheme recommendations
+    - Ensures no text in images
+    - Is professional and LinkedIn-appropriate
+    - Can be used immediately without modification
     
-    Use the search_knowledge tool to find relevant information from the knowledge base.
-    Use the scraper tool to gather additional information from product websites.
+    Focus on ACTIONABLE prompts, not vague concepts.
     
   expected_output: |
-    Product-focused content including:
-    1. Product descriptions and value propositions
-    2. Key features and benefits
-    3. Use cases and applications
-    4. Customer success stories
-    5. Competitive differentiators
-    6. Technical details (where relevant)
+    One complete DALL-E prompt per post:
+    
+    === POST 1 DALLE PROMPT ===
+    [Detailed, specific prompt ready for image generation]
+    
+    === POST 2 DALLE PROMPT ===
+    [Detailed, specific prompt ready for image generation]
+    
+    (One prompt per post)
 
-linkedin_post:
+content_calendar:
   description: |
-    Write engaging, optimized LinkedIn posts based on the generated content.
+    Create a publishing calendar with dates and scheduling information.
     
-    For each post, create:
-    - Attention-grabbing hook (first line)
-    - Compelling narrative or story
-    - Clear value proposition
-    - Strategic use of line breaks for readability
-    - Relevant emojis (use sparingly)
-    - Strong call-to-action
-    - 3-5 relevant hashtags
+    Generate a calendar table that includes:
+    - Post number (1, 2, 3, etc.)
+    - Publishing date (calculate based on frequency)
+    - Post title/theme (extract from posts)
+    - Visual asset reference (which DALL-E prompt to use)
+    - Optimal posting time for LinkedIn
+    - Success metrics to track
     
-    LinkedIn Post Best Practices:
-    - First line should stop the scroll
-    - Keep paragraphs short (1-2 lines)
-    - Use conversational tone
-    - Include personal insights or experiences
-    - Ask questions to drive engagement
-    - Optimal length: 1300-2000 characters
-    - Make it skimmable with clear structure
+    DO NOT repeat the full post content or prompts - just reference them.
+    Create a clean, actionable publishing schedule.
     
   expected_output: |
-    Ready-to-publish LinkedIn posts with:
-    1. Attention-grabbing opening hook
-    2. Well-structured body content
-    3. Clear value and takeaways
-    4. Engaging call-to-action
-    5. Relevant hashtags (3-5)
-    6. Optimal formatting for LinkedIn
+    A markdown table format calendar with columns:
+    | Post # | Date | Title | Visual | Time | Metrics |
     
-    Each post should be clearly separated and labeled.
-
-visuals:
-  description: |
-    Generate visual assets for each LinkedIn post using DALL-E.
-    
-    For each post:
-    1. Analyze the post content and theme
-    2. Create detailed DALL-E prompts that:
-       - Match the post's mood and message
-       - Follow professional design principles
-       - Are visually striking but not overwhelming
-       - Work well in LinkedIn feed format
-    3. Generate images using the generate_image tool
-    4. Document image concepts and prompts used
-    
-    Visual Guidelines:
-    - Professional yet eye-catching
-    - Consistent color palette
-    - High contrast for mobile viewing
-    - Text-free or minimal text
-    - Brand-appropriate style
-    
-  expected_output: |
-    Visual asset package including:
-    1. DALL-E prompts for each image
-    2. Generated image file paths
-    3. Design rationale and concepts
-    4. Color schemes and styles used
-    5. Alternative image suggestions
-    6. Visual brand guidelines applied
-
-plan_posts:
-  description: |
-    Create a comprehensive content calendar and save all content to organized files.
-    
-    Compile:
-    - Editorial plan
-    - Generated content
-    - Written LinkedIn posts
-    - Visual asset information
-    
-    Create a final content calendar that includes:
-    - Publishing schedule with specific dates
-    - Each post with its visual asset
-    - Hashtag strategy per post
-    - Optimal posting times
-    - Performance tracking metrics
-    - Engagement goals
-    
-    Save the complete plan to a markdown file using the file_writer tool.
-    Organize content in a clear, actionable format.
-    
-  expected_output: |
-    Final content calendar file (markdown) containing:
-    1. Publishing Schedule
-       - Dates and times for each post
-       - Day of week optimization
-    
-    2. Complete Post Package
-       - Full post text
-       - Visual asset reference
-       - Hashtags
-       - Target metrics
-    
-    3. Execution Guidelines
-       - Best practices for posting
-       - Engagement tactics
-       - Response templates
-    
-    4. Tracking Sheet
-       - Metrics to monitor
-       - Success criteria
-       - Optimization notes
-    
-    File should be saved as: linkedin_content_calendar.md
+    Plus brief next steps and file reference guide.
