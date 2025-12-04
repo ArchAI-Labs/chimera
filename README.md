@@ -221,6 +221,12 @@ To use the workflow as a library, import `LinkedInCrew` and run the pipeline wit
   - Config and environment management for portability.
   - Error handling, fallback logic, and health checks for robustness.
 
+<br>
+
+![class_diagram](https://github.com/ArchAI-Labs/chimera/blob/main/img/class_diagram.png)
+
+<br>
+
 ### Interface/Abstract Classes
 
 - **Event Base Class:**  
